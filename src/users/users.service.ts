@@ -39,11 +39,26 @@ export class UsersService {
     return user;
   }
 
-  async findByEmail(email: string): Promise<User | null> {
-    return this.userRepository.findOne({
-      where: { email },
-    });
-  }
+async findByEmail(email: string): Promise<User | null> {
+  return this.userRepository.findOne({
+    where: { email },
+  });
+}
+
+async findRolesByUserId(userId: number): Promise<string[]> {
+  const userRoles = await this.userRoleRepository.find({
+    where: {
+      user: {
+        id: userId,
+      },
+    },
+    relations: {
+      role: true,
+    },
+  });
+
+  return userRoles.map((userRole) => userRole.role.name);
+}
 
   async create(data: {
     email: string;

@@ -13,6 +13,8 @@ export const envValidationSchema = Joi.object({
     .valid('error', 'warn', 'info', 'debug')
     .default('info'),
 
+  JWT_SECRET: Joi.string().required(),
+
   DB_HOST: Joi.string().required(),
 
   DB_PORT: Joi.number()
