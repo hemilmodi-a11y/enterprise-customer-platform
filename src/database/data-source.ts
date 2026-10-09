@@ -6,6 +6,7 @@ import { Role } from '../roles/role.entity';
 import { UserRole } from '../roles/user-role.entity';
 import { RefreshToken } from '../auth/refresh-token.entity';
 import { PasswordResetToken } from '../auth/password-reset-token.entity';
+import { Customer } from '../customers/customer.entity';
 
 export default new DataSource({
   type: 'mysql',
@@ -16,15 +17,7 @@ export default new DataSource({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
 
-  entities: [
-    User,
-    Role,
-    UserRole,
-    RefreshToken,
-    PasswordResetToken,
-  ],
+  entities: [User, Role, UserRole, RefreshToken, PasswordResetToken, Customer],
 
-  migrations: [
-    'src/database/migrations/*.ts',
-  ],
+  migrations: ['src/database/migrations/*.ts'],
 });

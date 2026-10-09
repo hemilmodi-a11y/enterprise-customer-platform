@@ -6,19 +6,20 @@ import { AppService } from './app.service';
 import { DatabaseModule } from './database/database.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
-
+import { CustomersModule } from './customers/customers.module';
 
 @Module({
   imports: [
-   ConfigModule.forRoot({
-  isGlobal: true,
-  envFilePath: '.env',
-  validationSchema: envValidationSchema,
-}),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: '.env',
+      validationSchema: envValidationSchema,
+    }),
 
     DatabaseModule,
     UsersModule,
     AuthModule,
+    CustomersModule,
   ],
 
   controllers: [AppController],

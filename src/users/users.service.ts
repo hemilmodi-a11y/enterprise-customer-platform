@@ -39,26 +39,26 @@ export class UsersService {
     return user;
   }
 
-async findByEmail(email: string): Promise<User | null> {
-  return this.userRepository.findOne({
-    where: { email },
-  });
-}
+  async findByEmail(email: string): Promise<User | null> {
+    return this.userRepository.findOne({
+      where: { email: this.normalizeEmail(email) },
+    });
+  }
 
-async findRolesByUserId(userId: number): Promise<string[]> {
-  const userRoles = await this.userRoleRepository.find({
-    where: {
-      user: {
-        id: userId,
+  async findRolesByUserId(userId: number): Promise<string[]> {
+    const userRoles = await this.userRoleRepository.find({
+      where: {
+        user: {
+          id: userId,
+        },
       },
-    },
-    relations: {
-      role: true,
-    },
-  });
+      relations: {
+        role: true,
+      },
+    });
 
-  return userRoles.map((userRole) => userRole.role.name);
-}
+    return userRoles.map((userRole) => userRole.role.name);
+  }
 
   async create(data: {
     email: string;
@@ -66,13 +66,17 @@ async findRolesByUserId(userId: number): Promise<string[]> {
     firstName: string;
     lastName: string;
   }): Promise<User> {
-    const existingUser = await this.findByEmail(data.email);
+    const email = this.normalizeEmail(data.email);
+    const existingUser = await this.findByEmail(email);
 
     if (existingUser) {
       throw new ConflictException('Email is already registered');
     }
 
-    const user = this.userRepository.create(data);
+    const user = this.userRepository.create({
+      ...data,
+      email,
+    });
 
     return this.userRepository.save(user);
   }
@@ -92,5 +96,9 @@ async findRolesByUserId(userId: number): Promise<string[]> {
     });
 
     await this.userRoleRepository.save(userRole);
+  }
+
+  private normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
   }
 }

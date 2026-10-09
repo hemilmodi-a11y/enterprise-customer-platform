@@ -9,6 +9,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { RolesGuard } from './guards/roles.guard';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { PasswordResetToken } from './password-reset-token.entity';
 
 @Module({
@@ -16,10 +17,7 @@ import { PasswordResetToken } from './password-reset-token.entity';
     UsersModule,
     ConfigModule,
 
-    TypeOrmModule.forFeature([
-      RefreshToken,
-      PasswordResetToken,
-    ]),
+    TypeOrmModule.forFeature([RefreshToken, PasswordResetToken]),
 
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -37,14 +35,8 @@ import { PasswordResetToken } from './password-reset-token.entity';
 
   controllers: [AuthController],
 
-  providers: [
-    AuthService,
-    JwtStrategy,
-    RolesGuard,
-  ],
+  providers: [AuthService, JwtStrategy, RolesGuard, JwtAuthGuard],
 
-  exports: [
-    RolesGuard,
-  ],
+  exports: [RolesGuard, JwtAuthGuard],
 })
 export class AuthModule {}
