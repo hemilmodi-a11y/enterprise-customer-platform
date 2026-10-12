@@ -1,0 +1,65 @@
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
+
+import { Customer } from '../customers/customer.entity';
+import { CatalogService } from '../services/catalog-service.entity';
+import { User } from '../users/user.entity';
+import { ServiceRequestStatus } from './service-request-status.enum';
+
+@Entity('service_requests')
+@Index('IDX_service_requests_customer_status', ['customerId', 'status'])
+@Index('IDX_service_requests_service_status', ['serviceId', 'status'])
+@Index('IDX_service_requests_assignee_status', ['assignedToUserId', 'status'])
+@Index('IDX_service_requests_created_at', ['createdAt'])
+export class ServiceRequest {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column({ type: 'int', name: 'customer_id' })
+  customerId: number;
+
+  @ManyToOne(() => Customer, { nullable: false, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'customer_id' })
+  customer: Customer;
+
+  @Column({ type: 'int', name: 'service_id' })
+  serviceId: number;
+
+  @ManyToOne(() => CatalogService, { nullable: false, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'service_id' })
+  service: CatalogService;
+
+  @Column({ type: 'text' })
+  description: string;
+
+  @Column({
+    type: 'enum',
+    enum: ServiceRequestStatus,
+    default: ServiceRequestStatus.SUBMITTED,
+  })
+  status: ServiceRequestStatus;
+
+  @Column({ type: 'int', name: 'assigned_to_user_id', nullable: true })
+  assignedToUserId: number | null;
+
+  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'assigned_to_user_id' })
+  assignedToUser: User | null;
+
+  @Column({ name: 'assigned_at', type: 'datetime', nullable: true })
+  assignedAt: Date | null;
+
+  @CreateDateColumn({ name: 'created_at' })
+  createdAt: Date;
+
+  @UpdateDateColumn({ name: 'updated_at' })
+  updatedAt: Date;
+}

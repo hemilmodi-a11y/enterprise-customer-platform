@@ -28,6 +28,12 @@ export class User {
   @Column({ name: 'is_active', default: true })
   isActive: boolean;
 
+  @Column({ name: 'is_available', type: 'boolean', default: true })
+  isAvailable: boolean;
+
+  @Column({ name: 'support_categories', type: 'varchar', length: 500, nullable: true })
+  supportCategories: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

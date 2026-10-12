@@ -7,6 +7,8 @@ import { UserRole } from '../roles/user-role.entity';
 import { RefreshToken } from '../auth/refresh-token.entity';
 import { PasswordResetToken } from '../auth/password-reset-token.entity';
 import { Customer } from '../customers/customer.entity';
+import { ServiceRequest } from '../requests/service-request.entity';
+import { CatalogService } from '../services/catalog-service.entity';
 
 export default new DataSource({
   type: 'mysql',
@@ -17,7 +19,16 @@ export default new DataSource({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
 
-  entities: [User, Role, UserRole, RefreshToken, PasswordResetToken, Customer],
+  entities: [
+    User,
+    Role,
+    UserRole,
+    RefreshToken,
+    PasswordResetToken,
+    Customer,
+    CatalogService,
+    ServiceRequest,
+  ],
 
   migrations: ['src/database/migrations/*.ts'],
 });
