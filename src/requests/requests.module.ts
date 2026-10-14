@@ -6,6 +6,7 @@ import { ServiceRequestReadModelModule } from '../mongodb/service-request-read-m
 import { RequestsController } from './requests.controller';
 import { RequestsService } from './requests.service';
 import { ServiceRequest } from './service-request.entity';
+import { AgentRequestsController } from './agent-requests.controller';
 
 @Module({
   imports: [
@@ -13,7 +14,7 @@ import { ServiceRequest } from './service-request.entity';
     ServiceRequestReadModelModule,
     TypeOrmModule.forFeature([ServiceRequest]),
   ],
-  controllers: [RequestsController],
+  controllers: [RequestsController, AgentRequestsController],
   providers: [RequestsService],
   exports: [RequestsService],
 })

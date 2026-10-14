@@ -28,4 +28,22 @@ describe('environment validation', () => {
     });
     expect(invalid.error).toBeDefined();
   });
+
+  it('defaults the standalone Express listener to port 3001', () => {
+    const { error, value } = envValidationSchema.validate(
+      requiredConfiguration,
+    );
+
+    expect(error).toBeUndefined();
+    expect(value.EXPRESS_PORT).toBe(3001);
+  });
+
+  it('rejects an invalid Express listener port', () => {
+    const { error } = envValidationSchema.validate({
+      ...requiredConfiguration,
+      EXPRESS_PORT: 70000,
+    });
+
+    expect(error).toBeDefined();
+  });
 });

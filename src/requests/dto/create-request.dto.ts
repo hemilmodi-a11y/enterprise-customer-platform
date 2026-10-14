@@ -1,12 +1,16 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  IsEnum,
   IsInt,
   IsNotEmpty,
+  IsOptional,
   IsString,
   Length,
   Min,
 } from 'class-validator';
+
+import { ServiceRequestPriority } from '../service-request-priority.enum';
 
 export class CreateRequestDto {
   @ApiProperty({ minimum: 1, example: 5, description: 'Service ID' })
@@ -25,4 +29,12 @@ export class CreateRequestDto {
   @IsNotEmpty()
   @Length(10, 5000)
   description: string;
+
+  @ApiPropertyOptional({
+    enum: ServiceRequestPriority,
+    default: ServiceRequestPriority.NORMAL,
+  })
+  @IsOptional()
+  @IsEnum(ServiceRequestPriority)
+  priority?: ServiceRequestPriority;
 }

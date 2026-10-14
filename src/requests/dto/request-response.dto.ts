@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 
+import { ServiceRequestPriority } from '../service-request-priority.enum';
 import { ServiceRequestStatus } from '../service-request-status.enum';
 
 export class ServiceRequestResponseDto {
@@ -17,6 +18,9 @@ export class ServiceRequestResponseDto {
 
   @ApiProperty({ enum: ServiceRequestStatus })
   status: ServiceRequestStatus;
+
+  @ApiProperty({ enum: ServiceRequestPriority })
+  priority: ServiceRequestPriority;
 
   @ApiProperty({ type: Number, nullable: true, required: false })
   assignedToUserId: number | null;

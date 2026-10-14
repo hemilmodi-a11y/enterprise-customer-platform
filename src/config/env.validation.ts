@@ -5,9 +5,9 @@ export const envValidationSchema = Joi.object({
     .valid('development', 'test', 'production')
     .default('development'),
 
-  PORT: Joi.number()
-    .port()
-    .default(3000),
+  PORT: Joi.number().port().default(3000),
+
+  EXPRESS_PORT: Joi.number().port().default(3001),
 
   LOG_LEVEL: Joi.string()
     .valid('error', 'warn', 'info', 'debug')
@@ -17,9 +17,7 @@ export const envValidationSchema = Joi.object({
 
   DB_HOST: Joi.string().required(),
 
-  DB_PORT: Joi.number()
-    .port()
-    .default(3306),
+  DB_PORT: Joi.number().port().default(3306),
 
   DB_USERNAME: Joi.string().required(),
 
@@ -27,5 +25,7 @@ export const envValidationSchema = Joi.object({
 
   DB_NAME: Joi.string().required(),
 
-  MONGO_URI: Joi.string().uri({ scheme: ['mongodb', 'mongodb+srv'] }).required(),
+  MONGO_URI: Joi.string()
+    .uri({ scheme: ['mongodb', 'mongodb+srv'] })
+    .required(),
 });

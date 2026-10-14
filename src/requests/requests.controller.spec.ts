@@ -144,6 +144,7 @@ describe('RequestsController HTTP integration', () => {
       .send({
         serviceId: 5,
         description: 'We need internet restored to the warehouse.',
+        priority: 'High',
       })
       .expect(201);
 
@@ -191,6 +192,16 @@ describe('RequestsController HTTP integration', () => {
     await request(app.getHttpServer())
       .get('/api/v1/requests/not-an-id')
       .set(auth)
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post('/api/v1/requests')
+      .set(auth)
+      .send({
+        serviceId: 5,
+        description: 'We need internet restored to the warehouse.',
+        priority: 'Critical',
+      })
       .expect(400);
   });
 });

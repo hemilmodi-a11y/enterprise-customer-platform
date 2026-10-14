@@ -5,12 +5,18 @@ import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interfa
 import { Customer } from '../customers/customer.entity';
 import { CatalogService } from '../services/catalog-service.entity';
 import { ServiceStatus } from '../services/service-status.enum';
+import { ListAgentRequestsQueryDto } from './dto/list-agent-requests-query.dto';
 import { ListRequestsQueryDto } from './dto/list-requests-query.dto';
 import { RequestsService } from './requests.service';
 import {
+  OPEN_SERVICE_REQUEST_STATUSES,
   ServiceRequestStatus,
   ServiceRequestStatusPolicy,
 } from './service-request-status.enum';
+import {
+  HIGH_SERVICE_REQUEST_PRIORITIES,
+  ServiceRequestPriority,
+} from './service-request-priority.enum';
 import { ServiceRequest } from './service-request.entity';
 
 const customerActor: AuthenticatedUser = {
@@ -48,6 +54,7 @@ describe('RequestsService', () => {
       serviceId: service.id,
       description: 'We need internet restored.',
       status: ServiceRequestStatus.SUBMITTED,
+      priority: ServiceRequestPriority.NORMAL,
       createdAt: new Date(),
       updatedAt: new Date(),
     } as ServiceRequest;
@@ -63,6 +70,9 @@ describe('RequestsService', () => {
         create: jest.fn((entity) => entity),
         save: jest.fn(async (entity) => ({ ...entity, ...request })),
         findOne: jest.fn().mockResolvedValue(request),
+        createQueryBuilder: jest.fn(),
+      },
+      UserRole: {
         createQueryBuilder: jest.fn(),
       },
     };
@@ -94,6 +104,7 @@ describe('RequestsService', () => {
       customerId: 11,
       serviceId: 5,
       status: ServiceRequestStatus.SUBMITTED,
+      priority: ServiceRequestPriority.NORMAL,
     });
     expect(syncService.enqueueRequest).toHaveBeenCalledWith(
       expect.any(Object),
@@ -205,5 +216,177 @@ describe('RequestsService', () => {
         ServiceRequestStatus.ASSIGNED,
       ),
     ).not.toThrow();
+  });
+
+  it('uses parameterized agent, priority, and open-status filters with database pagination', async () => {
+    const agentQueryBuilder = {
+      innerJoin: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getRawOne: jest.fn().mockResolvedValue({ id: 15 }),
+    };
+    repositories.UserRole.createQueryBuilder.mockReturnValue(agentQueryBuilder);
+
+    const requestQueryBuilder = {
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([
+        [
+          {
+            id: 81,
+            serviceId: 5,
+            status: ServiceRequestStatus.IN_PROGRESS,
+            priority: ServiceRequestPriority.URGENT,
+            assignedToUserId: 15,
+            assignedAt: new Date('2026-10-01T00:00:00Z'),
+            createdAt: new Date('2026-09-30T00:00:00Z'),
+            updatedAt: new Date('2026-10-01T00:00:00Z'),
+          },
+        ],
+        1,
+      ]),
+    };
+    repositories.ServiceRequest.createQueryBuilder.mockReturnValue(
+      requestQueryBuilder,
+    );
+
+    const response = await requestsService.listHighPriorityOpenByAgent(
+      15,
+      Object.assign(new ListAgentRequestsQueryDto(), { page: 2, limit: 5 }),
+      {
+        userId: 1,
+        email: 'manager@example.com',
+        roles: ['Manager'],
+      },
+    );
+
+    expect(agentQueryBuilder.andWhere).toHaveBeenCalledWith(
+      'role.name = :roleName',
+      { roleName: 'SupportAgent' },
+    );
+    expect(requestQueryBuilder.where).toHaveBeenCalledWith(
+      'request.assignedToUserId = :agentId',
+      { agentId: 15 },
+    );
+    expect(requestQueryBuilder.andWhere).toHaveBeenCalledWith(
+      'request.priority IN (:...priorities)',
+      { priorities: HIGH_SERVICE_REQUEST_PRIORITIES },
+    );
+    expect(requestQueryBuilder.andWhere).toHaveBeenCalledWith(
+      'request.status IN (:...openStatuses)',
+      { openStatuses: OPEN_SERVICE_REQUEST_STATUSES },
+    );
+    expect(OPEN_SERVICE_REQUEST_STATUSES).not.toContain(
+      ServiceRequestStatus.RESOLVED,
+    );
+    expect(OPEN_SERVICE_REQUEST_STATUSES).not.toContain(
+      ServiceRequestStatus.CLOSED,
+    );
+    expect(requestQueryBuilder.skip).toHaveBeenCalledWith(5);
+    expect(requestQueryBuilder.take).toHaveBeenCalledWith(5);
+    expect(response).toMatchObject({
+      items: [
+        {
+          id: 81,
+          priority: ServiceRequestPriority.URGENT,
+          status: ServiceRequestStatus.IN_PROGRESS,
+        },
+      ],
+      total: 1,
+      page: 2,
+      limit: 5,
+      totalPages: 1,
+    });
+  });
+
+  it('denies customers and cross-agent support-agent queries and handles invalid or unknown agents', async () => {
+    const agentQueryBuilder = {
+      innerJoin: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getRawOne: jest.fn().mockResolvedValue({ id: 15 }),
+    };
+    repositories.UserRole.createQueryBuilder.mockReturnValue(agentQueryBuilder);
+
+    await expect(
+      requestsService.listHighPriorityOpenByAgent(
+        15,
+        new ListAgentRequestsQueryDto(),
+        customerActor,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      requestsService.listHighPriorityOpenByAgent(
+        16,
+        new ListAgentRequestsQueryDto(),
+        {
+          userId: 15,
+          email: 'agent@example.com',
+          roles: ['SupportAgent'],
+        },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      requestsService.listHighPriorityOpenByAgent(
+        0,
+        new ListAgentRequestsQueryDto(),
+        adminActor,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    agentQueryBuilder.getRawOne.mockResolvedValue(null);
+    await expect(
+      requestsService.listHighPriorityOpenByAgent(
+        404,
+        new ListAgentRequestsQueryDto(),
+        adminActor,
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('returns an empty page when the agent has no matching high-priority open requests', async () => {
+    repositories.UserRole.createQueryBuilder.mockReturnValue({
+      innerJoin: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getRawOne: jest.fn().mockResolvedValue({ id: 15 }),
+    });
+    repositories.ServiceRequest.createQueryBuilder.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      addOrderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+    });
+
+    await expect(
+      requestsService.listHighPriorityOpenByAgent(
+        15,
+        new ListAgentRequestsQueryDto(),
+        adminActor,
+      ),
+    ).resolves.toMatchObject({ items: [], total: 0, totalPages: 0 });
+  });
+
+  it('propagates an outbox failure so the enclosing request transaction can roll back', async () => {
+    syncService.enqueueRequest.mockRejectedValue(new Error('outbox insert failed'));
+
+    await expect(
+      requestsService.create(
+        { serviceId: 5, description: 'We need internet restored.' },
+        customerActor,
+      ),
+    ).rejects.toThrow('outbox insert failed');
   });
 });

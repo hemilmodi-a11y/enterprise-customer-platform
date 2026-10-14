@@ -18,13 +18,20 @@ import { ServiceStatus } from '../services/service-status.enum';
 import { ServiceRequestSyncService } from '../mongodb/service-request-sync.service';
 import { AssignRequestDto } from './dto/assign-request.dto';
 import { CreateRequestDto } from './dto/create-request.dto';
+import { ListAgentRequestsQueryDto } from './dto/list-agent-requests-query.dto';
 import { ListRequestsQueryDto } from './dto/list-requests-query.dto';
+import { PaginatedAgentRequestsResponseDto } from './dto/high-priority-request-response.dto';
 import { ServiceRequestResponseDto } from './dto/request-response.dto';
 import { UpdateRequestStatusDto } from './dto/update-request-status.dto';
 import {
+  OPEN_SERVICE_REQUEST_STATUSES,
   ServiceRequestStatus,
   ServiceRequestStatusPolicy,
 } from './service-request-status.enum';
+import {
+  HIGH_SERVICE_REQUEST_PRIORITIES,
+  ServiceRequestPriority,
+} from './service-request-priority.enum';
 import { ServiceRequest } from './service-request.entity';
 
 const SORT_COLUMNS = {
@@ -60,6 +67,7 @@ export class RequestsService {
         serviceId: service.id,
         description: dto.description.trim(),
         status: ServiceRequestStatus.SUBMITTED,
+        priority: dto.priority ?? ServiceRequestPriority.NORMAL,
       });
       const saved = await requestRepository.save(request);
       await this.syncService.enqueueRequest(manager, saved.id);
@@ -229,6 +237,84 @@ export class RequestsService {
     });
   }
 
+  async listHighPriorityOpenByAgent(
+    agentId: number,
+    query: ListAgentRequestsQueryDto,
+    actor: AuthenticatedUser,
+  ): Promise<PaginatedAgentRequestsResponseDto> {
+    this.assertCanReadAgentRequests(actor);
+    this.assertValidAgentId(agentId);
+
+    const hasManagerRole =
+      actor.roles.includes('Admin') || actor.roles.includes('Manager');
+    if (
+      actor.roles.includes('SupportAgent') &&
+      !hasManagerRole &&
+      actor.userId !== agentId
+    ) {
+      throw new ForbiddenException(
+        'Support agents can only view their own assigned requests',
+      );
+    }
+
+    const supportAgent = await this.dataSource
+      .getRepository(UserRole)
+      .createQueryBuilder('userRole')
+      .innerJoin('userRole.user', 'agent')
+      .innerJoin('userRole.role', 'role')
+      .select('agent.id', 'id')
+      .where('agent.id = :agentId', { agentId })
+      .andWhere('role.name = :roleName', { roleName: 'SupportAgent' })
+      .getRawOne<{ id: number }>();
+
+    if (!supportAgent) {
+      throw new NotFoundException(`Support agent with id ${agentId} not found`);
+    }
+
+    const [requests, total] = await this.dataSource
+      .getRepository(ServiceRequest)
+      .createQueryBuilder('request')
+      .select([
+        'request.id',
+        'request.serviceId',
+        'request.status',
+        'request.priority',
+        'request.assignedToUserId',
+        'request.assignedAt',
+        'request.createdAt',
+        'request.updatedAt',
+      ])
+      .where('request.assignedToUserId = :agentId', { agentId })
+      .andWhere('request.priority IN (:...priorities)', {
+        priorities: HIGH_SERVICE_REQUEST_PRIORITIES,
+      })
+      .andWhere('request.status IN (:...openStatuses)', {
+        openStatuses: OPEN_SERVICE_REQUEST_STATUSES,
+      })
+      .orderBy('request.createdAt', 'DESC')
+      .addOrderBy('request.id', 'DESC')
+      .skip((query.page - 1) * query.limit)
+      .take(query.limit)
+      .getManyAndCount();
+
+    return {
+      items: requests.map((request) => ({
+        id: request.id,
+        serviceId: request.serviceId,
+        status: request.status,
+        priority: request.priority,
+        assignedToUserId: request.assignedToUserId,
+        assignedAt: request.assignedAt,
+        createdAt: request.createdAt,
+        updatedAt: request.updatedAt,
+      })),
+      total,
+      page: query.page,
+      limit: query.limit,
+      totalPages: Math.ceil(total / query.limit),
+    };
+  }
+
   private applyFilters(
     queryBuilder: SelectQueryBuilder<ServiceRequest>,
     query: ListRequestsQueryDto,
@@ -299,6 +385,24 @@ export class RequestsService {
       throw new ForbiddenException(
         'Only customers can submit a service request',
       );
+    }
+  }
+
+  private assertCanReadAgentRequests(actor: AuthenticatedUser): void {
+    if (
+      !actor.roles.some((role) =>
+        ['Admin', 'Manager', 'SupportAgent'].includes(role),
+      )
+    ) {
+      throw new ForbiddenException(
+        'Admin, Manager, or SupportAgent role required',
+      );
+    }
+  }
+
+  private assertValidAgentId(agentId: number): void {
+    if (!Number.isInteger(agentId) || agentId < 1) {
+      throw new BadRequestException('Agent ID must be a positive integer');
     }
   }
 
@@ -491,6 +595,7 @@ export class RequestsService {
       serviceId: request.serviceId,
       description: request.description,
       status: request.status,
+      priority: request.priority,
       assignedToUserId: request.assignedToUserId ?? null,
       assignedAt: request.assignedAt ?? null,
       createdAt: request.createdAt,

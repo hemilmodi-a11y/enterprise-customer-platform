@@ -13,11 +13,16 @@ import { Customer } from '../customers/customer.entity';
 import { CatalogService } from '../services/catalog-service.entity';
 import { User } from '../users/user.entity';
 import { ServiceRequestStatus } from './service-request-status.enum';
+import { ServiceRequestPriority } from './service-request-priority.enum';
 
 @Entity('service_requests')
 @Index('IDX_service_requests_customer_status', ['customerId', 'status'])
 @Index('IDX_service_requests_service_status', ['serviceId', 'status'])
 @Index('IDX_service_requests_assignee_status', ['assignedToUserId', 'status'])
+@Index(
+  'IDX_service_requests_agent_priority_status_created',
+  ['assignedToUserId', 'priority', 'status', 'createdAt'],
+)
 @Index('IDX_service_requests_created_at', ['createdAt'])
 export class ServiceRequest {
   @PrimaryGeneratedColumn()
@@ -46,6 +51,13 @@ export class ServiceRequest {
     default: ServiceRequestStatus.SUBMITTED,
   })
   status: ServiceRequestStatus;
+
+  @Column({
+    type: 'enum',
+    enum: ServiceRequestPriority,
+    default: ServiceRequestPriority.NORMAL,
+  })
+  priority: ServiceRequestPriority;
 
   @Column({ type: 'int', name: 'assigned_to_user_id', nullable: true })
   assignedToUserId: number | null;
