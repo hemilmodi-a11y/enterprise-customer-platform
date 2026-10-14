@@ -28,6 +28,7 @@ const adminActor: AuthenticatedUser = {
 describe('RequestsService', () => {
   let requestsService: RequestsService;
   let repositories: Record<string, any>;
+  let syncService: { enqueueRequest: jest.Mock };
 
   beforeEach(() => {
     const customer = {
@@ -68,9 +69,15 @@ describe('RequestsService', () => {
 
     const dataSource = {
       getRepository: jest.fn((target) => repositories[target.name]),
+      transaction: jest.fn(async (callback) =>
+        callback({
+          getRepository: (target) => repositories[target.name],
+        }),
+      ),
     };
 
-    requestsService = new RequestsService(dataSource as any);
+    syncService = { enqueueRequest: jest.fn() };
+    requestsService = new RequestsService(dataSource as any, syncService as any);
   });
 
   it('creates a request for an authenticated customer when the service is active', async () => {
@@ -88,6 +95,10 @@ describe('RequestsService', () => {
       serviceId: 5,
       status: ServiceRequestStatus.SUBMITTED,
     });
+    expect(syncService.enqueueRequest).toHaveBeenCalledWith(
+      expect.any(Object),
+      99,
+    );
   });
 
   it('rejects unauthorized creation and invalid status changes', async () => {

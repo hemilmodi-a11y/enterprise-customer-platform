@@ -4,10 +4,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, SelectQueryBuilder } from 'typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository, SelectQueryBuilder } from 'typeorm';
 
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { ServiceRequestSyncService } from '../mongodb/service-request-sync.service';
 import { CatalogService } from './catalog-service.entity';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { ListServicesQueryDto } from './dto/list-services-query.dto';
@@ -29,6 +30,9 @@ export class ServicesService {
   constructor(
     @InjectRepository(CatalogService)
     private readonly servicesRepository: Repository<CatalogService>,
+    @InjectDataSource()
+    private readonly dataSource: DataSource,
+    private readonly syncService: ServiceRequestSyncService,
   ) {}
 
   async create(dto: CreateServiceDto, actor: AuthenticatedUser) {
@@ -88,15 +92,28 @@ export class ServicesService {
   ): Promise<ServiceResponseDto> {
     this.assertAdministrator(actor);
     this.assertValidId(id);
-    const service = await this.getServiceOrThrow(id);
 
-    if (dto.name !== undefined) service.name = dto.name;
-    if (dto.description !== undefined) service.description = dto.description;
-    if (dto.category !== undefined) service.category = dto.category;
-    if (dto.status !== undefined) service.status = dto.status;
-    if (dto.slaMinutes !== undefined) service.slaMinutes = dto.slaMinutes;
+    return this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(CatalogService);
+      const service = await repository.findOne({ where: { id } });
+      if (!service) {
+        throw new NotFoundException(`Service with id ${id} not found`);
+      }
 
-    return this.toResponse(await this.servicesRepository.save(service));
+      const categoryChanged =
+        dto.category !== undefined && dto.category !== service.category;
+      if (dto.name !== undefined) service.name = dto.name;
+      if (dto.description !== undefined) service.description = dto.description;
+      if (dto.category !== undefined) service.category = dto.category;
+      if (dto.status !== undefined) service.status = dto.status;
+      if (dto.slaMinutes !== undefined) service.slaMinutes = dto.slaMinutes;
+
+      const saved = await repository.save(service);
+      if (categoryChanged) {
+        await this.syncService.enqueueService(manager, saved.id);
+      }
+      return this.toResponse(saved);
+    });
   }
 
   async deactivate(

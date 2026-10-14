@@ -9,6 +9,13 @@ export enum ServiceRequestStatus {
   CLOSED = 'Closed',
 }
 
+export const OPEN_SERVICE_REQUEST_STATUSES: readonly ServiceRequestStatus[] = [
+  ServiceRequestStatus.SUBMITTED,
+  ServiceRequestStatus.ASSIGNED,
+  ServiceRequestStatus.IN_PROGRESS,
+  ServiceRequestStatus.PENDING_CUSTOMER,
+];
+
 export class ServiceRequestStatusPolicy {
   private static readonly ALLOWED_TRANSITIONS: Record<
     ServiceRequestStatus,

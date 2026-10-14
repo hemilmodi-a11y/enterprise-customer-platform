@@ -21,6 +21,7 @@ const admin: AuthenticatedUser = {
 describe('ServicesService', () => {
   let service: ServicesService;
   let repository: Repository<CatalogService>;
+  let syncService: { enqueueService: jest.Mock };
 
   beforeEach(() => {
     repository = {
@@ -29,7 +30,15 @@ describe('ServicesService', () => {
       findOne: jest.fn(),
       createQueryBuilder: jest.fn(),
     } as unknown as Repository<CatalogService>;
-    service = new ServicesService(repository);
+    const dataSource = {
+      transaction: jest.fn(async (callback) =>
+        callback({
+          getRepository: () => repository,
+        }),
+      ),
+    };
+    syncService = { enqueueService: jest.fn() };
+    service = new ServicesService(repository, dataSource as never, syncService as never);
   });
 
   it('creates a service with an active default and SLA in minutes', async () => {
@@ -120,6 +129,30 @@ describe('ServicesService', () => {
     await expect(
       service.update(404, { name: 'Updated' }, admin),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('queues request read-model refreshes when a service category changes', async () => {
+    const existing = {
+      id: 8,
+      name: 'Priority Support',
+      description: 'Priority response',
+      category: 'Support',
+      status: ServiceStatus.ACTIVE,
+      slaMinutes: 240,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as CatalogService;
+    jest.mocked(repository.findOne).mockResolvedValue(existing);
+    jest
+      .mocked(repository.save)
+      .mockImplementation(async (value) => value as CatalogService);
+
+    await service.update(8, { category: 'Networking' }, admin);
+
+    expect(syncService.enqueueService).toHaveBeenCalledWith(
+      expect.any(Object),
+      8,
+    );
   });
 
   it('deactivates rather than hard-deleting a service', async () => {

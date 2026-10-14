@@ -15,6 +15,7 @@ import { UserRole } from '../roles/user-role.entity';
 import { User } from '../users/user.entity';
 import { CatalogService } from '../services/catalog-service.entity';
 import { ServiceStatus } from '../services/service-status.enum';
+import { ServiceRequestSyncService } from '../mongodb/service-request-sync.service';
 import { AssignRequestDto } from './dto/assign-request.dto';
 import { CreateRequestDto } from './dto/create-request.dto';
 import { ListRequestsQueryDto } from './dto/list-requests-query.dto';
@@ -38,6 +39,7 @@ export class RequestsService {
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly syncService: ServiceRequestSyncService,
   ) {}
 
   async create(
@@ -49,19 +51,20 @@ export class RequestsService {
     const customer = await this.getCustomerProfileForUser(actor.userId);
     const service = await this.getActiveService(dto.serviceId);
 
-    const request = this.dataSource.getRepository(ServiceRequest).create({
-      customer,
-      customerId: customer.id,
-      service,
-      serviceId: service.id,
-      description: dto.description.trim(),
-      status: ServiceRequestStatus.SUBMITTED,
+    return this.dataSource.transaction(async (manager) => {
+      const requestRepository = manager.getRepository(ServiceRequest);
+      const request = requestRepository.create({
+        customer,
+        customerId: customer.id,
+        service,
+        serviceId: service.id,
+        description: dto.description.trim(),
+        status: ServiceRequestStatus.SUBMITTED,
+      });
+      const saved = await requestRepository.save(request);
+      await this.syncService.enqueueRequest(manager, saved.id);
+      return this.toResponse(saved);
     });
-
-    const saved = await this.dataSource
-      .getRepository(ServiceRequest)
-      .save(request);
-    return this.toResponse(saved);
   }
 
   async list(query: ListRequestsQueryDto, actor: AuthenticatedUser) {
@@ -133,18 +136,27 @@ export class RequestsService {
     this.assertCanUpdateStatus(actor);
     this.assertValidId(id);
 
-    const request = await this.getRequestOrThrow(id);
     if (this.isCustomer(actor)) {
       throw new ForbiddenException(
         'Customers are not allowed to update request status',
       );
     }
 
-    ServiceRequestStatusPolicy.assertTransition(request.status, dto.status);
+    return this.dataSource.transaction(async (manager) => {
+      const requestRepository = manager.getRepository(ServiceRequest);
+      const request = await requestRepository.findOne({
+        where: { id },
+      });
+      if (!request) {
+        throw new NotFoundException(`Service request with id ${id} not found`);
+      }
 
-    request.status = dto.status;
-    const saved = await this.dataSource.getRepository(ServiceRequest).save(request);
-    return this.toResponse(saved);
+      ServiceRequestStatusPolicy.assertTransition(request.status, dto.status);
+      request.status = dto.status;
+      const saved = await requestRepository.save(request);
+      await this.syncService.enqueueRequest(manager, saved.id);
+      return this.toResponse(saved);
+    });
   }
 
   async assign(
@@ -212,6 +224,7 @@ export class RequestsService {
       request.status = ServiceRequestStatus.ASSIGNED;
 
       const saved = await requestRepository.save(request);
+      await this.syncService.enqueueRequest(manager, saved.id);
       return this.toResponse(saved);
     });
   }

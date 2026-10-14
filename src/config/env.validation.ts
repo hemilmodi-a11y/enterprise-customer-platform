@@ -26,4 +26,6 @@ export const envValidationSchema = Joi.object({
   DB_PASSWORD: Joi.string().required(),
 
   DB_NAME: Joi.string().required(),
+
+  MONGO_URI: Joi.string().uri({ scheme: ['mongodb', 'mongodb+srv'] }).required(),
 });

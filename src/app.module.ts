@@ -9,6 +9,8 @@ import { AuthModule } from './auth/auth.module';
 import { CustomersModule } from './customers/customers.module';
 import { RequestsModule } from './requests/requests.module';
 import { ServicesModule } from './services/services.module';
+import { AnalyticsModule } from './analytics/analytics.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -24,6 +26,8 @@ import { ServicesModule } from './services/services.module';
     CustomersModule,
     ServicesModule,
     RequestsModule,
+    AnalyticsModule,
+    NotificationsModule,
   ],
 
   controllers: [AppController],

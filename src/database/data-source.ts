@@ -9,6 +9,7 @@ import { PasswordResetToken } from '../auth/password-reset-token.entity';
 import { Customer } from '../customers/customer.entity';
 import { ServiceRequest } from '../requests/service-request.entity';
 import { CatalogService } from '../services/catalog-service.entity';
+import { ServiceRequestSyncOutbox } from '../mongodb/service-request-sync-outbox.entity';
 
 export default new DataSource({
   type: 'mysql',
@@ -28,6 +29,7 @@ export default new DataSource({
     Customer,
     CatalogService,
     ServiceRequest,
+    ServiceRequestSyncOutbox,
   ],
 
   migrations: ['src/database/migrations/*.ts'],
