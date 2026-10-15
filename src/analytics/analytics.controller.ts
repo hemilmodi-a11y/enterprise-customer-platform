@@ -5,6 +5,7 @@ import {
   ApiForbiddenResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiQuery,
   ApiServiceUnavailableResponse,
   ApiTags,
   ApiUnauthorizedResponse,
@@ -31,10 +32,19 @@ export class AnalyticsController {
   })
   @ApiOkResponse({ type: OpenRequestsByCategoryResponseDto })
   @ApiBadRequestResponse({ description: 'Invalid category filter' })
-  @ApiForbiddenResponse({ description: 'An authorized support role is required' })
+  @ApiForbiddenResponse({
+    description: 'An authorized support role is required',
+  })
   @ApiUnauthorizedResponse({ description: 'Authentication required' })
   @ApiServiceUnavailableResponse({
     description: 'MongoDB reporting storage is temporarily unavailable',
+  })
+  @ApiQuery({
+    name: 'category',
+    required: false,
+    type: String,
+    maxLength: 100,
+    description: 'Optionally include only this service category.',
   })
   openRequestsByCategory(@Query() query: OpenRequestsQueryDto) {
     return this.analyticsService.openRequestsByCategory(query);

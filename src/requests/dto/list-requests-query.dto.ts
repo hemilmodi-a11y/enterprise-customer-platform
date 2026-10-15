@@ -21,7 +21,7 @@ const REQUEST_SORT_FIELDS = [
 ] as const;
 
 export class ListRequestsQueryDto {
-  @ApiPropertyOptional({ minimum: 1, default: 1 })
+  @ApiPropertyOptional({ minimum: 1, maximum: 1000000, default: 1 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()

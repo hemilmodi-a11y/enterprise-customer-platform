@@ -23,7 +23,7 @@ const SERVICE_SORT_FIELDS = [
 ] as const;
 
 export class ListServicesQueryDto {
-  @ApiPropertyOptional({ minimum: 1, default: 1 })
+  @ApiPropertyOptional({ minimum: 1, maximum: 1000000, default: 1 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()

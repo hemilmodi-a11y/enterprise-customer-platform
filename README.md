@@ -27,6 +27,18 @@
 
 Architecture decision: [Database selection — MySQL vs MongoDB](../docs/database-selection.md).
 
+NestJS Fastify adapter demonstration: [Fastify implementation and Express comparison](../docs/fastify-implementation.md).
+
+API conventions and compatibility: [API design](../docs/api-design.md).
+
+Interactive API reference: [Swagger/OpenAPI guide](../docs/swagger-openapi.md).
+
+In-app notifications: [Notification architecture and API](../docs/notifications.md).
+
+The NestJS API serves Swagger UI at `http://localhost:3000/api/docs` and its
+OpenAPI JSON at `http://localhost:3000/api/docs-json` by default. Set
+`SWAGGER_ENABLED=false` to disable both routes.
+
 ## Standalone Express demonstration
 
 The separate Express server demonstrates middleware, JWT authentication, input validation, safe request logging, and centralized errors without changing or starting the NestJS server.
@@ -41,12 +53,12 @@ npm run start:express:prod
 
 Set `JWT_SECRET` to the same secret used by the NestJS API. The Express server verifies signed HS256 bearer tokens through `passport-jwt`; the protected route is available to Admin and Manager roles. `EXPRESS_PORT` is independent of NestJS `PORT`.
 
-| Method | Path | Behavior |
-|---|---|---|
-| GET | `/api/v1/health` | Returns `{ "status": "ok" }`. |
-| GET | `/api/v1/system/status` | Returns status and process uptime in seconds. |
-| GET | `/api/v1/system/protected` | Requires a valid JWT and an Admin or Manager role. |
-| POST | `/api/v1/demo/echo` | Accepts only `{ "message": "text" }`, with a trimmed 1–500 character message. |
+| Method | Path                       | Behavior                                                                      |
+| ------ | -------------------------- | ----------------------------------------------------------------------------- |
+| GET    | `/api/v1/health`           | Returns `{ "status": "ok" }`.                                                 |
+| GET    | `/api/v1/system/status`    | Returns status and process uptime in seconds.                                 |
+| GET    | `/api/v1/system/protected` | Requires a valid JWT and an Admin or Manager role.                            |
+| POST   | `/api/v1/demo/echo`        | Accepts only `{ "message": "text" }`, with a trimmed 1–500 character message. |
 
 Example:
 
@@ -56,6 +68,20 @@ Invoke-RestMethod -Method Post -Uri http://localhost:3001/api/v1/demo/echo `
 ```
 
 Request logs contain the generated request ID, method, path (without query string), status, and duration. Authorization headers and request bodies are not logged. The server uses a separate listener and does not initialize NestJS modules or connect to either database.
+
+## NestJS Fastify demonstration
+
+The optional Fastify adapter demo uses the same NestJS controller patterns, validation pipe, JWT strategy, and RBAC guards on a separate port. It does not replace the existing Express-backed NestJS application or the standalone Express demonstration.
+
+```bash
+# Development, default FASTIFY_PORT=3002
+npm run start:fastify
+
+# Production after npm run build
+npm run start:fastify:prod
+```
+
+See [Fastify implementation](../docs/fastify-implementation.md) for endpoint examples, adapter choices, and Express/Fastify trade-offs.
 
 ## Project setup
 
@@ -253,7 +279,11 @@ Run the focused Task 7 tests with:
 ```bash
 npm test -- --runInBand src/requests/requests.service.spec.ts src/requests/agent-requests.controller.spec.ts
 ```
-#   e n t e r p r i s e  
- #   e n t e r p r i s e  
- #   e n t e r p r i s e - c u s t o m e r - p l a t f o r m  
+
+#   e n t e r p r i s e 
+ 
+ #   e n t e r p r i s e 
+ 
+ #   e n t e r p r i s e - c u s t o m e r - p l a t f o r m 
+ 
  

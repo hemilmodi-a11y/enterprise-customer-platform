@@ -38,10 +38,28 @@ describe('environment validation', () => {
     expect(value.EXPRESS_PORT).toBe(3001);
   });
 
+  it('defaults the standalone Fastify listener to port 3002', () => {
+    const { error, value } = envValidationSchema.validate(
+      requiredConfiguration,
+    );
+
+    expect(error).toBeUndefined();
+    expect(value.FASTIFY_PORT).toBe(3002);
+  });
+
   it('rejects an invalid Express listener port', () => {
     const { error } = envValidationSchema.validate({
       ...requiredConfiguration,
       EXPRESS_PORT: 70000,
+    });
+
+    expect(error).toBeDefined();
+  });
+
+  it('rejects an invalid Fastify listener port', () => {
+    const { error } = envValidationSchema.validate({
+      ...requiredConfiguration,
+      FASTIFY_PORT: 70000,
     });
 
     expect(error).toBeDefined();

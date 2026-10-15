@@ -32,7 +32,10 @@ const customer: AuthenticatedUser = {
 
 describe('RequestsController authorization metadata', () => {
   it('requires JWT authentication and role checks on all endpoints', () => {
-    const guards = Reflect.getMetadata(GUARDS_METADATA, RequestsController) as unknown[];
+    const guards = Reflect.getMetadata(
+      GUARDS_METADATA,
+      RequestsController,
+    ) as unknown[];
     expect(guards).toEqual(expect.arrayContaining([JwtAuthGuard, RolesGuard]));
   });
 });
@@ -157,6 +160,15 @@ describe('RequestsController HTTP integration', () => {
       .get('/api/v1/requests/my')
       .set(auth)
       .expect(200);
+    expect(requestsService.listMy).toHaveBeenCalledWith(
+      customer,
+      expect.objectContaining({
+        page: 1,
+        limit: 20,
+        sortBy: 'createdAt',
+        sortOrder: 'DESC',
+      }),
+    );
 
     await request(app.getHttpServer())
       .get('/api/v1/requests/12')
@@ -173,7 +185,32 @@ describe('RequestsController HTTP integration', () => {
       .post('/api/v1/requests/12/assign')
       .set(auth)
       .send({ agentId: 15 })
-      .expect(201);
+      .expect(200);
+  });
+
+  it('supports validated filters and pagination on the current customer request list', async () => {
+    requestsService.listMy.mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 2,
+      limit: 5,
+      totalPages: 0,
+    });
+
+    await request(app.getHttpServer())
+      .get('/api/v1/requests/my?page=2&limit=5&status=Assigned&sortOrder=asc')
+      .set({ Authorization: 'Bearer test-token' })
+      .expect(200);
+
+    expect(requestsService.listMy).toHaveBeenCalledWith(
+      customer,
+      expect.objectContaining({
+        page: 2,
+        limit: 5,
+        status: ServiceRequestStatus.ASSIGNED,
+        sortOrder: 'ASC',
+      }),
+    );
   });
 
   it('rejects unexpected body properties and invalid request IDs', async () => {
@@ -187,6 +224,11 @@ describe('RequestsController HTTP integration', () => {
         description: 'We need internet restored to the warehouse.',
         status: 'Closed',
       })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .get('/api/v1/requests/my?page=1000001')
+      .set(auth)
       .expect(400);
 
     await request(app.getHttpServer())
@@ -218,8 +260,12 @@ describe('RequestsController role metadata', () => {
   });
 
   it('allows customers to create and list their own requests', () => {
-    expect(Reflect.getMetadata(ROLES_KEY, controller.create)).toEqual(['Customer']);
-    expect(Reflect.getMetadata(ROLES_KEY, controller.myRequests)).toEqual(['Customer']);
+    expect(Reflect.getMetadata(ROLES_KEY, controller.create)).toEqual([
+      'Customer',
+    ]);
+    expect(Reflect.getMetadata(ROLES_KEY, controller.myRequests)).toEqual([
+      'Customer',
+    ]);
   });
 
   it('restricts assignment to managers and administrators', () => {

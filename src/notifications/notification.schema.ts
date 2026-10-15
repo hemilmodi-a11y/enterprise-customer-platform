@@ -30,6 +30,9 @@ export class Notification {
   @Prop({ type: Number, min: 1, default: null })
   relatedServiceRequestId: number | null;
 
+  @Prop({ type: String, default: undefined })
+  eventKey?: string;
+
   @Prop({ type: Boolean, default: false })
   isRead: boolean;
 
@@ -51,4 +54,8 @@ NotificationSchema.index(
 NotificationSchema.index(
   { recipientUserId: 1, isRead: 1, createdAt: -1 },
   { name: 'IDX_notifications_recipient_read_created' },
+);
+NotificationSchema.index(
+  { eventKey: 1 },
+  { name: 'UQ_notifications_event_key', unique: true, sparse: true },
 );

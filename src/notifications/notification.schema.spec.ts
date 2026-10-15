@@ -1,10 +1,13 @@
 import { describe, expect, it } from '@jest/globals';
 import { model } from 'mongoose';
 
-import { Notification, NotificationSchema, NotificationType } from './notification.schema';
+import { NotificationSchema, NotificationType } from './notification.schema';
 
 describe('Notification MongoDB schema', () => {
-  const ValidationModel = model('NotificationSchemaValidation', NotificationSchema);
+  const ValidationModel = model(
+    'NotificationSchemaValidation',
+    NotificationSchema,
+  );
 
   it('requires a recipient, valid type, title, and message and applies read defaults', () => {
     const valid = new ValidationModel({
@@ -39,5 +42,10 @@ describe('Notification MongoDB schema', () => {
       isRead: 1,
       createdAt: -1,
     });
+    expect(
+      NotificationSchema.indexes().find(
+        ([, options]) => options.name === 'UQ_notifications_event_key',
+      )?.[1],
+    ).toMatchObject({ unique: true, sparse: true });
   });
 });

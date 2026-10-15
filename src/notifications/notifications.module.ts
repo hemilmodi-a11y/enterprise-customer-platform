@@ -5,6 +5,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { MongoDatabaseModule } from '../mongodb/mongodb.module';
 import { User } from '../users/user.entity';
+import { NotificationOutbox } from './notification-outbox.entity';
+import { NotificationOutboxService } from './notification-outbox.service';
 import { Notification, NotificationSchema } from './notification.schema';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsService } from './notifications.service';
@@ -16,9 +18,10 @@ import { NotificationsService } from './notifications.service';
     MongooseModule.forFeature([
       { name: Notification.name, schema: NotificationSchema },
     ]),
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([User, NotificationOutbox]),
   ],
   controllers: [NotificationsController],
-  providers: [NotificationsService],
+  providers: [NotificationsService, NotificationOutboxService],
+  exports: [NotificationOutboxService],
 })
 export class NotificationsModule {}

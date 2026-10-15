@@ -6,7 +6,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
-import { DataSource, In, Not, Repository, SelectQueryBuilder } from 'typeorm';
+import {
+  DataSource,
+  EntityManager,
+  In,
+  Not,
+  Repository,
+  SelectQueryBuilder,
+} from 'typeorm';
 
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Customer } from '../customers/customer.entity';
@@ -16,6 +23,8 @@ import { User } from '../users/user.entity';
 import { CatalogService } from '../services/catalog-service.entity';
 import { ServiceStatus } from '../services/service-status.enum';
 import { ServiceRequestSyncService } from '../mongodb/service-request-sync.service';
+import { NotificationOutboxService } from '../notifications/notification-outbox.service';
+import { NotificationType } from '../notifications/notification.schema';
 import { AssignRequestDto } from './dto/assign-request.dto';
 import { CreateRequestDto } from './dto/create-request.dto';
 import { ListAgentRequestsQueryDto } from './dto/list-agent-requests-query.dto';
@@ -47,6 +56,7 @@ export class RequestsService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly syncService: ServiceRequestSyncService,
+    private readonly notificationOutbox: NotificationOutboxService,
   ) {}
 
   async create(
@@ -71,6 +81,17 @@ export class RequestsService {
       });
       const saved = await requestRepository.save(request);
       await this.syncService.enqueueRequest(manager, saved.id);
+      await this.notificationOutbox.enqueue(
+        manager,
+        `service-request:${saved.id}:created`,
+        {
+          recipientUserId: actor.userId,
+          type: NotificationType.SERVICE_REQUEST,
+          title: 'Service request submitted',
+          message: `Your service request #${saved.id} has been submitted.`,
+          relatedServiceRequestId: saved.id,
+        },
+      );
       return this.toResponse(saved);
     });
   }
@@ -115,14 +136,8 @@ export class RequestsService {
     };
   }
 
-  async listMy(actor: AuthenticatedUser) {
+  async listMy(actor: AuthenticatedUser, query: ListRequestsQueryDto) {
     this.assertCustomer(actor);
-    const query = Object.assign(new ListRequestsQueryDto(), {
-      page: 1,
-      limit: 20,
-      sortBy: 'createdAt',
-      sortOrder: 'DESC',
-    });
     return this.list(query, actor);
   }
 
@@ -159,10 +174,26 @@ export class RequestsService {
         throw new NotFoundException(`Service request with id ${id} not found`);
       }
 
-      ServiceRequestStatusPolicy.assertTransition(request.status, dto.status);
+      const previousStatus = request.status;
+      ServiceRequestStatusPolicy.assertTransition(previousStatus, dto.status);
       request.status = dto.status;
       const saved = await requestRepository.save(request);
       await this.syncService.enqueueRequest(manager, saved.id);
+      const recipientUserId = await this.getCustomerUserId(
+        manager,
+        request.customerId,
+      );
+      await this.notificationOutbox.enqueue(
+        manager,
+        `service-request:${saved.id}:status:${previousStatus}:${saved.status}:${saved.updatedAt.getTime()}`,
+        {
+          recipientUserId,
+          type: NotificationType.SERVICE_REQUEST,
+          title: 'Service request status updated',
+          message: `Your service request #${saved.id} is now ${saved.status}.`,
+          relatedServiceRequestId: saved.id,
+        },
+      );
       return this.toResponse(saved);
     });
   }
@@ -180,10 +211,14 @@ export class RequestsService {
     }
 
     return this.dataSource.transaction(async (manager) => {
-      const requestRepository = manager.getRepository(ServiceRequest) as Repository<ServiceRequest>;
+      const requestRepository = manager.getRepository(
+        ServiceRequest,
+      ) as Repository<ServiceRequest>;
       const userRepository = manager.getRepository(User) as Repository<User>;
       const roleRepository = manager.getRepository(Role) as Repository<Role>;
-      const userRoleRepository = manager.getRepository(UserRole) as Repository<UserRole>;
+      const userRoleRepository = manager.getRepository(
+        UserRole,
+      ) as Repository<UserRole>;
 
       const request = await requestRepository.findOne({
         where: { id },
@@ -211,7 +246,6 @@ export class RequestsService {
             userRepository,
             roleRepository,
             userRoleRepository,
-            requestRepository,
           )
         : await this.findBestEligibleAgent(
             request,
@@ -227,12 +261,49 @@ export class RequestsService {
         );
       }
 
+      if (
+        request.status === ServiceRequestStatus.ASSIGNED &&
+        request.assignedToUserId === targetAgent.id
+      ) {
+        return this.toResponse(request);
+      }
+
       request.assignedToUserId = targetAgent.id;
-      request.assignedAt = new Date();
+      const assignedAt = new Date();
+      request.assignedAt = assignedAt;
       request.status = ServiceRequestStatus.ASSIGNED;
 
       const saved = await requestRepository.save(request);
       await this.syncService.enqueueRequest(manager, saved.id);
+      const customerUserId = await this.getCustomerUserId(
+        manager,
+        request.customerId,
+      );
+      const assignmentKey = `${saved.id}:assignment:${targetAgent.id}:${assignedAt.getTime()}`;
+      await this.notificationOutbox.enqueue(
+        manager,
+        `service-request:${assignmentKey}:agent`,
+        {
+          recipientUserId: targetAgent.id,
+          type: NotificationType.SERVICE_REQUEST,
+          title: 'Service request assigned',
+          message: `Service request #${saved.id} has been assigned to you.`,
+          relatedServiceRequestId: saved.id,
+        },
+      );
+      if (customerUserId !== targetAgent.id) {
+        await this.notificationOutbox.enqueue(
+          manager,
+          `service-request:${assignmentKey}:customer`,
+          {
+            recipientUserId: customerUserId,
+            type: NotificationType.SERVICE_REQUEST,
+            title: 'Service request assigned',
+            message: `Your service request #${saved.id} has been assigned to a support agent.`,
+            relatedServiceRequestId: saved.id,
+          },
+        );
+      }
       return this.toResponse(saved);
     });
   }
@@ -341,9 +412,11 @@ export class RequestsService {
   }
 
   private async getActiveService(id: number): Promise<CatalogService> {
-    const service = await this.dataSource.getRepository(CatalogService).findOne({
-      where: { id, status: ServiceStatus.ACTIVE },
-    });
+    const service = await this.dataSource
+      .getRepository(CatalogService)
+      .findOne({
+        where: { id, status: ServiceStatus.ACTIVE },
+      });
 
     if (!service) {
       throw new NotFoundException(`Active service with id ${id} not found`);
@@ -367,11 +440,27 @@ export class RequestsService {
     return customer;
   }
 
-  private async getRequestOrThrow(id: number): Promise<ServiceRequest> {
-    const request = await this.dataSource.getRepository(ServiceRequest).findOne({
-      where: { id },
-      relations: { customer: { user: true }, service: true },
+  private async getCustomerUserId(
+    manager: EntityManager,
+    customerId: number,
+  ): Promise<number> {
+    const customer = await manager.getRepository(Customer).findOne({
+      where: { id: customerId },
+      relations: { user: true },
     });
+    if (!customer?.user?.id) {
+      throw new NotFoundException('Customer account not found');
+    }
+    return customer.user.id;
+  }
+
+  private async getRequestOrThrow(id: number): Promise<ServiceRequest> {
+    const request = await this.dataSource
+      .getRepository(ServiceRequest)
+      .findOne({
+        where: { id },
+        relations: { customer: { user: true }, service: true },
+      });
 
     if (!request) {
       throw new NotFoundException(`Service request with id ${id} not found`);
@@ -450,7 +539,6 @@ export class RequestsService {
     userRepository: Repository<User>,
     roleRepository: Repository<Role>,
     userRoleRepository: Repository<UserRole>,
-    requestRepository: Repository<ServiceRequest>,
   ): Promise<User | null> {
     const agent = await userRepository.findOne({
       where: { id: agentId },
@@ -472,7 +560,7 @@ export class RequestsService {
       throw new ForbiddenException('Selected user is not a support agent');
     }
 
-    await this.assertEligibleAgent(agent, request.service.category, requestRepository);
+    this.assertEligibleAgent(agent, request.service.category);
     return agent;
   }
 
@@ -543,17 +631,15 @@ export class RequestsService {
     return !!assignment;
   }
 
-  private async assertEligibleAgent(
-    agent: User,
-    category: string,
-    requestRepository: Repository<ServiceRequest>,
-  ): Promise<void> {
+  private assertEligibleAgent(agent: User, category: string): void {
     if (!agent.isActive) {
       throw new ConflictException('Selected support agent is inactive');
     }
 
     if (!agent.isAvailable) {
-      throw new ConflictException('Selected support agent is currently unavailable');
+      throw new ConflictException(
+        'Selected support agent is currently unavailable',
+      );
     }
 
     if (!this.isAgentCategoryEligible(agent, category)) {
@@ -561,7 +647,6 @@ export class RequestsService {
         `Support agent is not eligible for the ${category} service category`,
       );
     }
-
   }
 
   private isAgentCategoryEligible(agent: User, category: string): boolean {

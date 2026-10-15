@@ -49,3 +49,13 @@ export class PaginatedNotificationsResponseDto {
   @ApiProperty()
   totalPages: number;
 }
+
+export class UnreadNotificationCountResponseDto {
+  @ApiProperty()
+  unreadCount: number;
+}
+
+export class MarkAllNotificationsReadResponseDto {
+  @ApiProperty()
+  updatedCount: number;
+}

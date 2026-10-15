@@ -7,10 +7,12 @@ import { RequestsController } from './requests.controller';
 import { RequestsService } from './requests.service';
 import { ServiceRequest } from './service-request.entity';
 import { AgentRequestsController } from './agent-requests.controller';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
     AuthModule,
+    NotificationsModule,
     ServiceRequestReadModelModule,
     TypeOrmModule.forFeature([ServiceRequest]),
   ],

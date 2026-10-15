@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   ParseIntPipe,
   Patch,
@@ -56,10 +58,7 @@ export class RequestsController {
   @ApiBadRequestResponse({ description: 'Invalid request payload' })
   @ApiForbiddenResponse({ description: 'Customer role required' })
   @ApiUnauthorizedResponse({ description: 'Authentication required' })
-  create(
-    @Body() dto: CreateRequestDto,
-    @Req() request: AuthenticatedRequest,
-  ) {
+  create(@Body() dto: CreateRequestDto, @Req() request: AuthenticatedRequest) {
     return this.requestsService.create(dto, request.user);
   }
 
@@ -67,23 +66,93 @@ export class RequestsController {
   @Roles('Customer', 'Admin', 'Manager', 'SupportAgent')
   @ApiOperation({ summary: 'List requests with pagination and filters' })
   @ApiOkResponse({ type: PaginatedRequestsResponseDto })
-  @ApiQuery({ name: 'page', required: false, type: Number, minimum: 1 })
-  @ApiQuery({ name: 'limit', required: false, type: Number, minimum: 1, maximum: 100 })
-  @ApiQuery({ name: 'status', required: false, enum: ['Submitted', 'Assigned', 'In Progress', 'Pending Customer', 'Resolved', 'Closed'] })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    minimum: 1,
+    maximum: 1000000,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    minimum: 1,
+    maximum: 100,
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: [
+      'Submitted',
+      'Assigned',
+      'In Progress',
+      'Pending Customer',
+      'Resolved',
+      'Closed',
+    ],
+  })
   @ApiQuery({ name: 'serviceId', required: false, type: Number })
   @ApiQuery({ name: 'search', required: false, type: String })
-  @ApiQuery({ name: 'sortBy', required: false, enum: ['createdAt', 'updatedAt', 'status', 'serviceId'] })
+  @ApiQuery({
+    name: 'sortBy',
+    required: false,
+    enum: ['createdAt', 'updatedAt', 'status', 'serviceId'],
+  })
   @ApiQuery({ name: 'sortOrder', required: false, enum: ['ASC', 'DESC'] })
-  list(@Query() query: ListRequestsQueryDto, @Req() request: AuthenticatedRequest) {
+  list(
+    @Query() query: ListRequestsQueryDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
     return this.requestsService.list(query, request.user);
   }
 
   @Get('my')
   @Roles('Customer')
-  @ApiOperation({ summary: 'List the authenticated customer’s service requests' })
+  @ApiOperation({
+    summary: 'List the authenticated customer’s service requests',
+  })
   @ApiOkResponse({ type: PaginatedRequestsResponseDto })
-  myRequests(@Req() request: AuthenticatedRequest) {
-    return this.requestsService.listMy(request.user);
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    minimum: 1,
+    maximum: 1000000,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    minimum: 1,
+    maximum: 100,
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: [
+      'Submitted',
+      'Assigned',
+      'In Progress',
+      'Pending Customer',
+      'Resolved',
+      'Closed',
+    ],
+  })
+  @ApiQuery({ name: 'serviceId', required: false, type: Number, minimum: 1 })
+  @ApiQuery({ name: 'search', required: false, type: String, maxLength: 100 })
+  @ApiQuery({
+    name: 'sortBy',
+    required: false,
+    enum: ['createdAt', 'updatedAt', 'status', 'serviceId'],
+  })
+  @ApiQuery({ name: 'sortOrder', required: false, enum: ['ASC', 'DESC'] })
+  @ApiBadRequestResponse({ description: 'Invalid list query' })
+  myRequests(
+    @Query() query: ListRequestsQueryDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.requestsService.listMy(request.user, query);
   }
 
   @Get(':id')
@@ -91,7 +160,9 @@ export class RequestsController {
   @ApiOperation({ summary: 'Get a service request by ID' })
   @ApiOkResponse({ type: ServiceRequestResponseDto })
   @ApiNotFoundResponse({ description: 'Request not found' })
-  @ApiForbiddenResponse({ description: 'The current user cannot access this request' })
+  @ApiForbiddenResponse({
+    description: 'The current user cannot access this request',
+  })
   findById(
     @Param('id', ParseIntPipe) id: number,
     @Req() request: AuthenticatedRequest,
@@ -103,8 +174,12 @@ export class RequestsController {
   @Roles('Admin', 'Manager', 'SupportAgent')
   @ApiOperation({ summary: 'Update a service request status' })
   @ApiOkResponse({ type: ServiceRequestResponseDto })
-  @ApiBadRequestResponse({ description: 'Invalid status or invalid transition' })
-  @ApiForbiddenResponse({ description: 'Not authorized to perform status changes' })
+  @ApiBadRequestResponse({
+    description: 'Invalid status or invalid transition',
+  })
+  @ApiForbiddenResponse({
+    description: 'Not authorized to perform status changes',
+  })
   updateStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateRequestStatusDto,
@@ -115,6 +190,7 @@ export class RequestsController {
 
   @Post(':id/assign')
   @Roles('Admin', 'Manager')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Assign a service request to a support agent' })
   @ApiOkResponse({ type: ServiceRequestResponseDto })
   @ApiBadRequestResponse({ description: 'Invalid request or target agent' })

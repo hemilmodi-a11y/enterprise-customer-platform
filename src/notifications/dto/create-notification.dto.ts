@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   Length,
+  Matches,
   Min,
 } from 'class-validator';
 
@@ -28,6 +29,7 @@ export class CreateNotificationDto {
   @IsString()
   @IsNotEmpty()
   @Length(1, 150)
+  @Matches(/^[^<>]*$/, { message: 'title must not contain HTML markup' })
   title: string;
 
   @ApiProperty({ maxLength: 2000 })
@@ -35,6 +37,7 @@ export class CreateNotificationDto {
   @IsString()
   @IsNotEmpty()
   @Length(1, 2000)
+  @Matches(/^[^<>]*$/, { message: 'message must not contain HTML markup' })
   message: string;
 
   @ApiPropertyOptional({ minimum: 1, nullable: true })

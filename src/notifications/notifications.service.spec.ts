@@ -1,7 +1,4 @@
-import {
-  NotFoundException,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { describe, expect, it, jest } from '@jest/globals';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
@@ -33,6 +30,12 @@ describe('NotificationsService', () => {
       find: jest.fn(),
       countDocuments: jest.fn(),
       findOneAndUpdate: jest.fn(),
+      updateMany: jest.fn(() => ({
+        exec: jest.fn().mockResolvedValue({ modifiedCount: 3 }),
+      })),
+      updateOne: jest.fn(() => ({
+        exec: jest.fn().mockResolvedValue({ upsertedCount: 1 }),
+      })),
     };
     const usersRepository = {
       findOne: jest.fn().mockResolvedValue({ id: 17 } as User),
@@ -107,6 +110,33 @@ describe('NotificationsService', () => {
     });
   });
 
+  it('uses the explicit read-state filter when both supported filters are present', async () => {
+    const { service, notificationsModel } = createService();
+    notificationsModel.find.mockReturnValue({
+      sort: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue([]),
+    });
+    notificationsModel.countDocuments.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(0),
+    });
+
+    await service.listForUser(17, {
+      page: 1,
+      limit: 20,
+      unreadOnly: true,
+      isRead: true,
+      sortOrder: 'DESC',
+    });
+
+    expect(notificationsModel.find).toHaveBeenCalledWith({
+      recipientUserId: 17,
+      isRead: true,
+    });
+  });
+
   it('does not expose another user’s notification when marking it read', async () => {
     const { service, notificationsModel } = createService();
     notificationsModel.findOneAndUpdate.mockReturnValue({
@@ -117,13 +147,67 @@ describe('NotificationsService', () => {
       }),
     });
 
-    await expect(
-      service.markRead(doc._id, 99),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.markRead(doc._id, 99)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
     expect(notificationsModel.findOneAndUpdate).toHaveBeenCalledWith(
       { _id: doc._id, recipientUserId: 99 },
-      expect.objectContaining({ $set: expect.objectContaining({ isRead: true }) }),
+      expect.objectContaining({
+        $set: expect.objectContaining({ isRead: true }),
+      }),
       { new: true, runValidators: true },
+    );
+  });
+
+  it('rejects malformed notification IDs without querying MongoDB', async () => {
+    const { service, notificationsModel } = createService();
+
+    await expect(
+      service.markRead('not-an-object-id', 17),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(notificationsModel.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('counts unread notifications and marks all only for the current recipient', async () => {
+    const { service, notificationsModel } = createService();
+    notificationsModel.countDocuments.mockReturnValue({
+      exec: jest.fn().mockResolvedValue(4),
+    });
+
+    await expect(service.unreadCountForUser(17)).resolves.toBe(4);
+    expect(notificationsModel.countDocuments).toHaveBeenCalledWith({
+      recipientUserId: 17,
+      isRead: false,
+    });
+
+    await expect(service.markAllReadForUser(17)).resolves.toBe(3);
+    expect(notificationsModel.updateMany).toHaveBeenCalledWith(
+      { recipientUserId: 17, isRead: false },
+      {
+        $set: expect.objectContaining({
+          isRead: true,
+          readAt: expect.any(Date),
+        }),
+      },
+    );
+  });
+
+  it('uses an idempotent upsert for workflow notification retries', async () => {
+    const { service, notificationsModel } = createService();
+    const payload = {
+      recipientUserId: 17,
+      type: NotificationType.SERVICE_REQUEST,
+      title: 'Request assigned',
+      message: 'A service request was assigned to you.',
+      relatedServiceRequestId: 12,
+    };
+
+    await service.createWorkflowNotification('notification-outbox:12', payload);
+
+    expect(notificationsModel.updateOne).toHaveBeenCalledWith(
+      { eventKey: 'notification-outbox:12' },
+      { $setOnInsert: { ...payload, eventKey: 'notification-outbox:12' } },
+      { upsert: true, runValidators: true },
     );
   });
 
@@ -176,6 +260,13 @@ describe('NotificationsService', () => {
         forbidNonWhitelisted: true,
       }),
     ).not.toHaveLength(0);
+    const html = plainToInstance(CreateNotificationDto, {
+      recipientUserId: 17,
+      type: NotificationType.SYSTEM,
+      title: '<script>alert(1)</script>',
+      message: 'Maintenance update',
+    });
+    expect(await validate(html)).not.toHaveLength(0);
 
     const invalidQuery = plainToInstance(ListNotificationsQueryDto, {
       page: '0',

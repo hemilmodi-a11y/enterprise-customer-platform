@@ -14,6 +14,7 @@ import { CreateNotificationDto } from './dto/create-notification.dto';
 import { ListNotificationsQueryDto } from './dto/list-notifications-query.dto';
 import { NotificationResponseDto } from './dto/notification-response.dto';
 import { Notification } from './notification.schema';
+import { NotificationOutboxPayload } from './notification-outbox.entity';
 
 @Injectable()
 export class NotificationsService {
@@ -55,13 +56,12 @@ export class NotificationsService {
     }
   }
 
-  async listForUser(
-    userId: number,
-    query: ListNotificationsQueryDto,
-  ) {
+  async listForUser(userId: number, query: ListNotificationsQueryDto) {
     this.ensureConnected();
     const filter: FilterQuery<Notification> = { recipientUserId: userId };
-    if (query.unreadOnly) {
+    if (query.isRead !== undefined) {
+      filter.isRead = query.isRead;
+    } else if (query.unreadOnly) {
       filter.isRead = false;
     }
 
@@ -84,6 +84,64 @@ export class NotificationsService {
         limit: query.limit,
         totalPages: Math.ceil(total / query.limit),
       };
+    } catch (error) {
+      this.logDatabaseError(error);
+      throw new ServiceUnavailableException(
+        'Notification storage is temporarily unavailable.',
+      );
+    }
+  }
+
+  async unreadCountForUser(userId: number): Promise<number> {
+    this.ensureConnected();
+    try {
+      return await this.notificationsModel
+        .countDocuments({ recipientUserId: userId, isRead: false })
+        .exec();
+    } catch (error) {
+      this.logDatabaseError(error);
+      throw new ServiceUnavailableException(
+        'Notification storage is temporarily unavailable.',
+      );
+    }
+  }
+
+  async markAllReadForUser(userId: number): Promise<number> {
+    this.ensureConnected();
+    try {
+      const result = await this.notificationsModel
+        .updateMany(
+          { recipientUserId: userId, isRead: false },
+          { $set: { isRead: true, readAt: new Date() } },
+        )
+        .exec();
+      return result.modifiedCount;
+    } catch (error) {
+      this.logDatabaseError(error);
+      throw new ServiceUnavailableException(
+        'Notification storage is temporarily unavailable.',
+      );
+    }
+  }
+
+  async createWorkflowNotification(
+    eventKey: string,
+    payload: NotificationOutboxPayload,
+  ): Promise<void> {
+    this.ensureConnected();
+    try {
+      await this.notificationsModel
+        .updateOne(
+          { eventKey },
+          {
+            $setOnInsert: {
+              ...payload,
+              eventKey,
+            },
+          },
+          { upsert: true, runValidators: true },
+        )
+        .exec();
     } catch (error) {
       this.logDatabaseError(error);
       throw new ServiceUnavailableException(
@@ -135,20 +193,18 @@ export class NotificationsService {
     }
   }
 
-  private toResponse(
-    notification: {
-      _id: unknown;
-      recipientUserId: number;
-      type: Notification['type'];
-      title: string;
-      message: string;
-      relatedServiceRequestId?: number | null;
-      isRead: boolean;
-      readAt?: Date | null;
-      createdAt: Date;
-      updatedAt: Date;
-    },
-  ): NotificationResponseDto {
+  private toResponse(notification: {
+    _id: unknown;
+    recipientUserId: number;
+    type: Notification['type'];
+    title: string;
+    message: string;
+    relatedServiceRequestId?: number | null;
+    isRead: boolean;
+    readAt?: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }): NotificationResponseDto {
     return {
       id: String(notification._id),
       recipientUserId: notification.recipientUserId,

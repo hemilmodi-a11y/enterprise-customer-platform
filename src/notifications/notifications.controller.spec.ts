@@ -28,10 +28,7 @@ describe('NotificationsController', () => {
       Reflect.getMetadata(GUARDS_METADATA, NotificationsController),
     ).toEqual(expect.arrayContaining([JwtAuthGuard, RolesGuard]));
     expect(
-      Reflect.getMetadata(
-        ROLES_KEY,
-        NotificationsController.prototype.create,
-      ),
+      Reflect.getMetadata(ROLES_KEY, NotificationsController.prototype.create),
     ).toEqual(['Admin', 'Manager']);
     expect(
       Reflect.getMetadata(
@@ -47,6 +44,8 @@ describe('NotificationsController', () => {
       create: jest.fn(),
       listForUser: jest.fn(),
       markRead: jest.fn(),
+      unreadCountForUser: jest.fn(),
+      markAllReadForUser: jest.fn(),
     };
 
     beforeAll(async () => {
@@ -117,6 +116,29 @@ describe('NotificationsController', () => {
       );
 
       await request(app.getHttpServer())
+        .get('/api/v1/notifications?isRead=false')
+        .set({ Authorization: '******' })
+        .expect(200);
+      expect(notificationsService.listForUser).toHaveBeenCalledWith(
+        27,
+        expect.objectContaining({ isRead: false }),
+      );
+
+      notificationsService.unreadCountForUser.mockResolvedValue(4);
+      await request(app.getHttpServer())
+        .get('/api/v1/notifications/unread-count')
+        .set({ Authorization: '******' })
+        .expect(200, { unreadCount: 4 });
+      expect(notificationsService.unreadCountForUser).toHaveBeenCalledWith(27);
+
+      notificationsService.markAllReadForUser.mockResolvedValue(2);
+      await request(app.getHttpServer())
+        .patch('/api/v1/notifications/read-all')
+        .set({ Authorization: '******' })
+        .expect(200, { updatedCount: 2 });
+      expect(notificationsService.markAllReadForUser).toHaveBeenCalledWith(27);
+
+      await request(app.getHttpServer())
         .patch(`/api/v1/notifications/${'a'.repeat(24)}/read`)
         .set({ Authorization: 'Bearer fake-test-token' })
         .expect(200);
@@ -142,6 +164,21 @@ describe('NotificationsController', () => {
       await request(app.getHttpServer())
         .get('/api/v1/notifications/me?limit=1000')
         .set({ Authorization: 'Bearer fake-test-token' })
+        .expect(400);
+      await request(app.getHttpServer())
+        .get('/api/v1/notifications?isRead=maybe')
+        .set({ Authorization: 'Bearer test-token' })
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .post('/api/v1/notifications')
+        .set({ Authorization: 'Bearer test-token' })
+        .send({
+          recipientUserId: 27,
+          type: NotificationType.SYSTEM,
+          title: '<script>unsafe</script>',
+          message: 'Scheduled maintenance.',
+        })
         .expect(400);
     });
   });

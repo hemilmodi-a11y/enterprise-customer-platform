@@ -1,8 +1,9 @@
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ConfigService } from '@nestjs/config';
 
 import { AppModule } from './app.module';
+import { configureSwagger } from './swagger.config';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -15,16 +16,12 @@ async function bootstrap() {
     }),
   );
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Enterprise Customer Platform API')
-    .setDescription('Customer management and authentication endpoints')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, swaggerDocument);
+  const config = app.get(ConfigService);
+  if (config.get<boolean>('SWAGGER_ENABLED', true)) {
+    configureSwagger(app);
+  }
 
-  await app.listen(process.env.PORT ?? 3000);
+  await app.listen(config.get<number>('PORT', 3000));
 }
 
 bootstrap();

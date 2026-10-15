@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
@@ -35,6 +39,7 @@ describe('RequestsService', () => {
   let requestsService: RequestsService;
   let repositories: Record<string, any>;
   let syncService: { enqueueRequest: jest.Mock };
+  let notificationOutbox: { enqueue: jest.Mock };
 
   beforeEach(() => {
     const customer = {
@@ -74,6 +79,18 @@ describe('RequestsService', () => {
       },
       UserRole: {
         createQueryBuilder: jest.fn(),
+        findOne: jest.fn().mockResolvedValue({ id: 1 }),
+      },
+      User: {
+        findOne: jest.fn().mockResolvedValue({
+          id: 15,
+          isActive: true,
+          isAvailable: true,
+          supportCategories: 'Support',
+        }),
+      },
+      Role: {
+        findOne: jest.fn().mockResolvedValue({ id: 2, name: 'SupportAgent' }),
       },
     };
 
@@ -87,7 +104,12 @@ describe('RequestsService', () => {
     };
 
     syncService = { enqueueRequest: jest.fn() };
-    requestsService = new RequestsService(dataSource as any, syncService as any);
+    notificationOutbox = { enqueue: jest.fn() };
+    requestsService = new RequestsService(
+      dataSource as any,
+      syncService as any,
+      notificationOutbox as any,
+    );
   });
 
   it('creates a request for an authenticated customer when the service is active', async () => {
@@ -110,6 +132,14 @@ describe('RequestsService', () => {
       expect.any(Object),
       99,
     );
+    expect(notificationOutbox.enqueue).toHaveBeenCalledWith(
+      expect.any(Object),
+      'service-request:99:created',
+      expect.objectContaining({
+        recipientUserId: customerActor.userId,
+        relatedServiceRequestId: 99,
+      }),
+    );
   });
 
   it('rejects unauthorized creation and invalid status changes', async () => {
@@ -130,7 +160,9 @@ describe('RequestsService', () => {
       updatedAt: new Date(),
       customer: { user: { id: customerActor.userId } },
     } as ServiceRequest;
-    jest.spyOn(requestsService as any, 'getRequestOrThrow').mockResolvedValue(request);
+    jest
+      .spyOn(requestsService as any, 'getRequestOrThrow')
+      .mockResolvedValue(request);
 
     await expect(
       requestsService.updateStatus(
@@ -139,6 +171,84 @@ describe('RequestsService', () => {
         adminActor,
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('queues a customer notification in the same transaction as a status change', async () => {
+    const timestamp = new Date('2026-10-15T10:00:00Z');
+    repositories.ServiceRequest.findOne.mockResolvedValueOnce({
+      id: 99,
+      customerId: 11,
+      serviceId: 5,
+      status: ServiceRequestStatus.ASSIGNED,
+      priority: ServiceRequestPriority.NORMAL,
+    });
+    const saved = {
+      id: 99,
+      customerId: 11,
+      serviceId: 5,
+      description: 'Need help',
+      status: ServiceRequestStatus.IN_PROGRESS,
+      priority: ServiceRequestPriority.NORMAL,
+      updatedAt: timestamp,
+    };
+    repositories.ServiceRequest.save.mockResolvedValueOnce(saved);
+
+    await requestsService.updateStatus(
+      99,
+      { status: ServiceRequestStatus.IN_PROGRESS },
+      adminActor,
+    );
+
+    expect(notificationOutbox.enqueue).toHaveBeenCalledWith(
+      expect.any(Object),
+      `service-request:99:status:Assigned:In Progress:${timestamp.getTime()}`,
+      expect.objectContaining({
+        recipientUserId: customerActor.userId,
+        relatedServiceRequestId: 99,
+        message: 'Your service request #99 is now In Progress.',
+      }),
+    );
+  });
+
+  it('queues customer and assignee notifications for a new assignment', async () => {
+    repositories.ServiceRequest.findOne.mockResolvedValueOnce({
+      id: 99,
+      customerId: 11,
+      serviceId: 5,
+      status: ServiceRequestStatus.SUBMITTED,
+      assignedToUserId: null,
+      service: { category: 'Support' },
+    });
+    repositories.ServiceRequest.save.mockResolvedValueOnce({
+      id: 99,
+      customerId: 11,
+      serviceId: 5,
+      status: ServiceRequestStatus.ASSIGNED,
+      assignedToUserId: 15,
+      assignedAt: new Date('2026-10-15T10:00:00Z'),
+      updatedAt: new Date('2026-10-15T10:00:00Z'),
+    });
+
+    await requestsService.assign(99, { agentId: 15 }, adminActor);
+
+    expect(notificationOutbox.enqueue).toHaveBeenCalledTimes(2);
+    expect(notificationOutbox.enqueue).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.stringMatching(/^service-request:99:assignment:15:\d+:agent$/),
+      expect.objectContaining({
+        recipientUserId: 15,
+        message: 'Service request #99 has been assigned to you.',
+      }),
+    );
+    expect(notificationOutbox.enqueue).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.stringMatching(/^service-request:99:assignment:15:\d+:customer$/),
+      expect.objectContaining({
+        recipientUserId: customerActor.userId,
+        message:
+          'Your service request #99 has been assigned to a support agent.',
+      }),
+    );
   });
 
   it('allows listing only the current customer’s own request records', async () => {
@@ -151,7 +261,9 @@ describe('RequestsService', () => {
       getManyAndCount: jest.fn().mockResolvedValue([[{ id: 99 }], 1]),
     };
 
-    repositories.ServiceRequest.createQueryBuilder.mockReturnValue(queryBuilder);
+    repositories.ServiceRequest.createQueryBuilder.mockReturnValue(
+      queryBuilder,
+    );
     const response = await requestsService.list(
       Object.assign(new ListRequestsQueryDto(), {
         page: 1,
@@ -189,17 +301,17 @@ describe('RequestsService', () => {
       .spyOn(requestsService as any, 'getRequestOrThrow')
       .mockResolvedValue(request);
 
-    await expect(requestsService.findById(99, customerActor)).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    await expect(
+      requestsService.findById(99, customerActor),
+    ).rejects.toBeInstanceOf(ForbiddenException);
 
     jest
       .spyOn(requestsService as any, 'getRequestOrThrow')
       .mockRejectedValue(new NotFoundException('Request not found'));
 
-    await expect(requestsService.findById(404, adminActor)).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    await expect(
+      requestsService.findById(404, adminActor),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('validates the centralized transition policy', () => {
@@ -380,7 +492,9 @@ describe('RequestsService', () => {
   });
 
   it('propagates an outbox failure so the enclosing request transaction can roll back', async () => {
-    syncService.enqueueRequest.mockRejectedValue(new Error('outbox insert failed'));
+    syncService.enqueueRequest.mockRejectedValue(
+      new Error('outbox insert failed'),
+    );
 
     await expect(
       requestsService.create(
@@ -388,5 +502,18 @@ describe('RequestsService', () => {
         customerActor,
       ),
     ).rejects.toThrow('outbox insert failed');
+  });
+
+  it('rolls back a request transaction when its notification event cannot be queued', async () => {
+    notificationOutbox.enqueue.mockRejectedValue(
+      new Error('notification outbox insert failed'),
+    );
+
+    await expect(
+      requestsService.create(
+        { serviceId: 5, description: 'We need internet restored.' },
+        customerActor,
+      ),
+    ).rejects.toThrow('notification outbox insert failed');
   });
 });

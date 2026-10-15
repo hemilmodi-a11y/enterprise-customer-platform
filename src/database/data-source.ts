@@ -10,6 +10,7 @@ import { Customer } from '../customers/customer.entity';
 import { ServiceRequest } from '../requests/service-request.entity';
 import { CatalogService } from '../services/catalog-service.entity';
 import { ServiceRequestSyncOutbox } from '../mongodb/service-request-sync-outbox.entity';
+import { NotificationOutbox } from '../notifications/notification-outbox.entity';
 
 export default new DataSource({
   type: 'mysql',
@@ -30,6 +31,7 @@ export default new DataSource({
     CatalogService,
     ServiceRequest,
     ServiceRequestSyncOutbox,
+    NotificationOutbox,
   ],
 
   migrations: ['src/database/migrations/*.ts'],
