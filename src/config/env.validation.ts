@@ -13,6 +13,28 @@ export const envValidationSchema = Joi.object({
 
   SWAGGER_ENABLED: Joi.boolean().default(true),
 
+  CACHE_ENABLED: Joi.boolean().default(true),
+
+  CACHE_REDIS_URL: Joi.string()
+    .uri({ scheme: ['redis', 'rediss'] })
+    .default('redis://localhost:6379'),
+
+  CACHE_SERVICE_LIST_TTL_SECONDS: Joi.number()
+    .integer()
+    .min(1)
+    .max(3600)
+    .default(60),
+
+  CACHE_SERVICE_DETAIL_TTL_SECONDS: Joi.number()
+    .integer()
+    .min(1)
+    .max(3600)
+    .default(120),
+
+  AWS_REGION: Joi.string().min(1),
+
+  S3_BUCKET: Joi.string().min(3).max(63),
+
   LOG_LEVEL: Joi.string()
     .valid('error', 'warn', 'info', 'debug')
     .default('info'),
@@ -32,4 +54,6 @@ export const envValidationSchema = Joi.object({
   MONGO_URI: Joi.string()
     .uri({ scheme: ['mongodb', 'mongodb+srv'] })
     .required(),
-});
+})
+  .with('AWS_REGION', 'S3_BUCKET')
+  .with('S3_BUCKET', 'AWS_REGION');

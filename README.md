@@ -35,6 +35,10 @@ Interactive API reference: [Swagger/OpenAPI guide](../docs/swagger-openapi.md).
 
 In-app notifications: [Notification architecture and API](../docs/notifications.md).
 
+Service catalog caching: [Caching architecture and configuration](../docs/caching.md).
+
+Service request documents: [File upload and private S3 storage](../docs/file-uploads.md).
+
 The NestJS API serves Swagger UI at `http://localhost:3000/api/docs` and its
 OpenAPI JSON at `http://localhost:3000/api/docs-json` by default. Set
 `SWAGGER_ENABLED=false` to disable both routes.

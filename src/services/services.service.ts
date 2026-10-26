@@ -4,15 +4,21 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository, SelectQueryBuilder } from 'typeorm';
+import { createHash } from 'crypto';
 
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { RedisCacheService } from '../cache/redis-cache.service';
 import { ServiceRequestSyncService } from '../mongodb/service-request-sync.service';
 import { CatalogService } from './catalog-service.entity';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { ListServicesQueryDto } from './dto/list-services-query.dto';
-import { ServiceResponseDto } from './dto/service-response.dto';
+import {
+  PaginatedServicesResponseDto,
+  ServiceResponseDto,
+} from './dto/service-response.dto';
 import { UpdateServiceDto } from './dto/update-service.dto';
 import { ServiceStatus } from './service-status.enum';
 
@@ -24,6 +30,7 @@ const SORT_COLUMNS = {
   status: 'service.status',
   slaMinutes: 'service.slaMinutes',
 } as const;
+const CACHE_NAMESPACE = 'service-catalog:v1';
 
 @Injectable()
 export class ServicesService {
@@ -33,6 +40,8 @@ export class ServicesService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly syncService: ServiceRequestSyncService,
+    private readonly cache: RedisCacheService,
+    private readonly config: ConfigService,
   ) {}
 
   async create(dto: CreateServiceDto, actor: AuthenticatedUser) {
@@ -44,10 +53,23 @@ export class ServicesService {
       status: dto.status ?? ServiceStatus.ACTIVE,
       slaMinutes: dto.slaMinutes,
     });
-    return this.toResponse(await this.servicesRepository.save(service));
+    const saved = await this.servicesRepository.save(service);
+    await this.cache.invalidate(CACHE_NAMESPACE);
+    return this.toResponse(saved);
   }
 
   async list(query: ListServicesQueryDto) {
+    const version = await this.cache.getVersion(CACHE_NAMESPACE);
+    const cacheKey =
+      version === null ? null : this.listCacheKey(version, query);
+    if (cacheKey) {
+      const cached =
+        await this.cache.getJson<PaginatedServicesResponseDto>(cacheKey);
+      if (cached) {
+        return this.hydrateDates(cached);
+      }
+    }
+
     const queryBuilder = this.servicesRepository.createQueryBuilder('service');
     this.applyFilters(queryBuilder, query);
 
@@ -65,24 +87,53 @@ export class ServicesService {
 
     const [services, total] = await queryBuilder.getManyAndCount();
 
-    return {
+    const response: PaginatedServicesResponseDto = {
       items: services.map((service) => this.toResponse(service)),
       total,
       page: query.page,
       limit: query.limit,
       totalPages: Math.ceil(total / query.limit),
     };
+    if (cacheKey) {
+      await this.cache.setJson(
+        cacheKey,
+        response,
+        this.config.get<number>('CACHE_SERVICE_LIST_TTL_SECONDS', 60),
+      );
+    }
+    return response;
   }
 
   async findById(id: number): Promise<ServiceResponseDto> {
     this.assertValidId(id);
+    const version = await this.cache.getVersion(CACHE_NAMESPACE);
+    const cacheKey = version === null ? null : this.detailCacheKey(version, id);
+    if (cacheKey) {
+      const cached = await this.cache.getJson<ServiceResponseDto>(cacheKey);
+      if (cached) {
+        return {
+          ...cached,
+          createdAt: new Date(cached.createdAt),
+          updatedAt: new Date(cached.updatedAt),
+        };
+      }
+    }
+
     const service = await this.servicesRepository.findOne({
       where: { id },
     });
     if (!service) {
       throw new NotFoundException(`Service with id ${id} not found`);
     }
-    return this.toResponse(service);
+    const response = this.toResponse(service);
+    if (cacheKey) {
+      await this.cache.setJson(
+        cacheKey,
+        response,
+        this.config.get<number>('CACHE_SERVICE_DETAIL_TTL_SECONDS', 120),
+      );
+    }
+    return response;
   }
 
   async update(
@@ -93,7 +144,7 @@ export class ServicesService {
     this.assertAdministrator(actor);
     this.assertValidId(id);
 
-    return this.dataSource.transaction(async (manager) => {
+    const response = await this.dataSource.transaction(async (manager) => {
       const repository = manager.getRepository(CatalogService);
       const service = await repository.findOne({ where: { id } });
       if (!service) {
@@ -114,6 +165,8 @@ export class ServicesService {
       }
       return this.toResponse(saved);
     });
+    await this.cache.invalidate(CACHE_NAMESPACE);
+    return response;
   }
 
   async deactivate(
@@ -124,7 +177,42 @@ export class ServicesService {
     this.assertValidId(id);
     const service = await this.getServiceOrThrow(id);
     service.status = ServiceStatus.INACTIVE;
-    return this.toResponse(await this.servicesRepository.save(service));
+    const saved = await this.servicesRepository.save(service);
+    await this.cache.invalidate(CACHE_NAMESPACE);
+    return this.toResponse(saved);
+  }
+
+  private listCacheKey(version: string, query: ListServicesQueryDto): string {
+    const normalizedQuery = {
+      page: query.page,
+      limit: query.limit,
+      search: query.search ?? null,
+      category: query.category ?? null,
+      status: query.status ?? null,
+      sortBy: query.sortBy,
+      sortOrder: query.sortOrder,
+    };
+    const digest = createHash('sha256')
+      .update(JSON.stringify(normalizedQuery))
+      .digest('hex');
+    return `${CACHE_NAMESPACE}:g${version}:list:${digest}`;
+  }
+
+  private detailCacheKey(version: string, id: number): string {
+    return `${CACHE_NAMESPACE}:g${version}:detail:${id}`;
+  }
+
+  private hydrateDates(
+    cached: PaginatedServicesResponseDto,
+  ): PaginatedServicesResponseDto {
+    return {
+      ...cached,
+      items: cached.items.map((item) => ({
+        ...item,
+        createdAt: new Date(item.createdAt),
+        updatedAt: new Date(item.updatedAt),
+      })),
+    };
   }
 
   private applyFilters(

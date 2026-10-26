@@ -22,6 +22,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { RequestsController } from './requests.controller';
 import { RequestsService } from './requests.service';
+import { RequestAttachmentsService } from './request-attachments.service';
 import { ServiceRequestStatus } from './service-request-status.enum';
 
 const customer: AuthenticatedUser = {
@@ -50,11 +51,22 @@ describe('RequestsController HTTP integration', () => {
     updateStatus: jest.fn(),
     assign: jest.fn(),
   };
+  const attachmentsService = {
+    upload: jest.fn(),
+    list: jest.fn(),
+    createDownloadUrl: jest.fn(),
+  };
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({
       controllers: [RequestsController],
-      providers: [{ provide: RequestsService, useValue: requestsService }],
+      providers: [
+        { provide: RequestsService, useValue: requestsService },
+        {
+          provide: RequestAttachmentsService,
+          useValue: attachmentsService,
+        },
+      ],
     })
       .overrideGuard(JwtAuthGuard)
       .useValue({
@@ -245,6 +257,48 @@ describe('RequestsController HTTP integration', () => {
         priority: 'Critical',
       })
       .expect(400);
+  });
+
+  it('routes authenticated upload, list, and download operations', async () => {
+    requestsService.findById.mockResolvedValue({ id: 12 });
+    attachmentsService.upload.mockResolvedValue({
+      id: 4,
+      serviceRequestId: 12,
+      originalFileName: 'report.pdf',
+    });
+    attachmentsService.list.mockResolvedValue([]);
+    attachmentsService.createDownloadUrl.mockResolvedValue({
+      url: 'https://example.invalid/signed',
+      expiresInSeconds: 300,
+    });
+
+    await request(app.getHttpServer())
+      .post('/api/v1/requests/12/attachments')
+      .set({ Authorization: '******' })
+      .attach('file', Buffer.from('%PDF-1.4\nexample'), {
+        filename: 'report.pdf',
+        contentType: 'application/pdf',
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .get('/api/v1/requests/12/attachments')
+      .set({ Authorization: '******' })
+      .expect(200);
+    await request(app.getHttpServer())
+      .get('/api/v1/requests/12/attachments/4/download')
+      .set({ Authorization: '******' })
+      .expect(200);
+
+    expect(attachmentsService.upload).toHaveBeenCalledWith(
+      12,
+      expect.objectContaining({ originalname: 'report.pdf' }),
+      customer,
+    );
+    expect(attachmentsService.createDownloadUrl).toHaveBeenCalledWith(
+      12,
+      4,
+      customer,
+    );
   });
 });
 

@@ -22,6 +22,12 @@ describe('ServicesService', () => {
   let service: ServicesService;
   let repository: Repository<CatalogService>;
   let syncService: { enqueueService: jest.Mock };
+  let cache: {
+    getVersion: jest.Mock;
+    getJson: jest.Mock;
+    setJson: jest.Mock;
+    invalidate: jest.Mock;
+  };
 
   beforeEach(() => {
     repository = {
@@ -38,7 +44,22 @@ describe('ServicesService', () => {
       ),
     };
     syncService = { enqueueService: jest.fn() };
-    service = new ServicesService(repository, dataSource as never, syncService as never);
+    cache = {
+      getVersion: jest.fn().mockResolvedValue('0'),
+      getJson: jest.fn().mockResolvedValue(null),
+      setJson: jest.fn().mockResolvedValue(undefined),
+      invalidate: jest.fn().mockResolvedValue(undefined),
+    };
+    const config = {
+      get: jest.fn((_key: string, fallback: number) => fallback),
+    };
+    service = new ServicesService(
+      repository,
+      dataSource as never,
+      syncService as never,
+      cache as never,
+      config as never,
+    );
   });
 
   it('creates a service with an active default and SLA in minutes', async () => {
@@ -225,6 +246,168 @@ describe('ServicesService', () => {
       limit: 10,
       totalPages: 0,
     });
+  });
+
+  it('caches service lists by every response-affecting query parameter', async () => {
+    const queryBuilder = {
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+    };
+    jest
+      .mocked(repository.createQueryBuilder)
+      .mockReturnValue(queryBuilder as never);
+    const baseQuery = Object.assign(new ListServicesQueryDto(), {
+      page: 1,
+      limit: 20,
+      sortBy: 'createdAt',
+      sortOrder: 'DESC',
+    });
+
+    await service.list(baseQuery);
+    await service.list({ ...baseQuery, page: 2 });
+
+    const keys = cache.setJson.mock.calls.map((call) => call[0]);
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(
+      keys.every((key: string) =>
+        key.startsWith('service-catalog:v1:g0:list:'),
+      ),
+    ).toBe(true);
+    expect(cache.setJson).toHaveBeenNthCalledWith(
+      1,
+      keys[0],
+      expect.any(Object),
+      60,
+    );
+    expect(queryBuilder.getManyAndCount).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns cached service lists without querying MySQL and rehydrates timestamps', async () => {
+    const createdAt = new Date('2025-01-01T00:00:00.000Z');
+    cache.getJson.mockResolvedValue({
+      items: [
+        {
+          id: 8,
+          name: 'Priority Support',
+          description: 'Priority response',
+          category: 'Support',
+          status: ServiceStatus.ACTIVE,
+          slaMinutes: 240,
+          createdAt: createdAt.toISOString(),
+          updatedAt: createdAt.toISOString(),
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 20,
+      totalPages: 1,
+    });
+
+    const response = await service.list(new ListServicesQueryDto());
+
+    expect(repository.createQueryBuilder).not.toHaveBeenCalled();
+    expect(response.items[0].createdAt).toEqual(createdAt);
+    expect(response.items[0].createdAt).toBeInstanceOf(Date);
+  });
+
+  it('caches and rehydrates service details', async () => {
+    const createdAt = new Date('2025-01-01T00:00:00.000Z');
+    const entity = {
+      id: 8,
+      name: 'Priority Support',
+      description: 'Priority response',
+      category: 'Support',
+      status: ServiceStatus.ACTIVE,
+      slaMinutes: 240,
+      createdAt,
+      updatedAt: createdAt,
+    } as CatalogService;
+    jest.mocked(repository.findOne).mockResolvedValue(entity);
+
+    const firstResponse = await service.findById(8);
+
+    expect(firstResponse.createdAt).toEqual(createdAt);
+    expect(cache.setJson).toHaveBeenCalledWith(
+      'service-catalog:v1:g0:detail:8',
+      firstResponse,
+      120,
+    );
+
+    cache.getJson.mockResolvedValue({
+      ...firstResponse,
+      createdAt: createdAt.toISOString(),
+      updatedAt: createdAt.toISOString(),
+    });
+    const secondResponse = await service.findById(8);
+
+    expect(repository.findOne).toHaveBeenCalledTimes(1);
+    expect(secondResponse.createdAt).toEqual(createdAt);
+    expect(secondResponse.createdAt).toBeInstanceOf(Date);
+  });
+
+  it('falls back to MySQL when the cache is unavailable', async () => {
+    cache.getVersion.mockResolvedValue(null);
+    const queryBuilder = {
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+    };
+    jest
+      .mocked(repository.createQueryBuilder)
+      .mockReturnValue(queryBuilder as never);
+
+    await service.list(new ListServicesQueryDto());
+
+    expect(queryBuilder.getManyAndCount).toHaveBeenCalledTimes(1);
+    expect(cache.getJson).not.toHaveBeenCalled();
+    expect(cache.setJson).not.toHaveBeenCalled();
+  });
+
+  it('invalidates catalog entries after successful create, update, and deactivate', async () => {
+    jest.mocked(repository.save).mockImplementation(
+      async (value) =>
+        ({
+          ...value,
+          id: 8,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }) as CatalogService,
+    );
+    await service.create(
+      {
+        name: 'Priority Support',
+        description: 'Priority response',
+        category: 'Support',
+        slaMinutes: 240,
+      },
+      admin,
+    );
+
+    const existing = {
+      id: 8,
+      name: 'Priority Support',
+      description: 'Priority response',
+      category: 'Support',
+      status: ServiceStatus.ACTIVE,
+      slaMinutes: 240,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as CatalogService;
+    jest.mocked(repository.findOne).mockResolvedValue(existing);
+    jest
+      .mocked(repository.save)
+      .mockImplementation(async (value) => value as CatalogService);
+    await service.update(8, { name: 'Updated' }, admin);
+    await service.deactivate(8, admin);
+
+    expect(cache.invalidate).toHaveBeenCalledTimes(3);
+    expect(cache.invalidate).toHaveBeenCalledWith('service-catalog:v1');
   });
 
   it('rejects protected properties and invalid fields through DTO validation', async () => {

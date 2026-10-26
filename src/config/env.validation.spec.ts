@@ -64,4 +64,20 @@ describe('environment validation', () => {
 
     expect(error).toBeDefined();
   });
+
+  it('requires AWS region and S3 bucket to be configured together', () => {
+    expect(
+      envValidationSchema.validate({
+        ...requiredConfiguration,
+        AWS_REGION: 'us-east-1',
+      }).error,
+    ).toBeDefined();
+    expect(
+      envValidationSchema.validate({
+        ...requiredConfiguration,
+        AWS_REGION: 'us-east-1',
+        S3_BUCKET: 'customer-platform-private-documents',
+      }).error,
+    ).toBeUndefined();
+  });
 });

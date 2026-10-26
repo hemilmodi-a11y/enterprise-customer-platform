@@ -9,7 +9,7 @@ services:
       MYSQL_USER: app_user
       MYSQL_PASSWORD: app_password
     ports:
-      - "3306:3306"
+      - '3306:3306'
     volumes:
       - mysql_data:/var/lib/mysql
 
@@ -18,9 +18,17 @@ services:
     container_name: customer-platform-mongodb
     restart: unless-stopped
     ports:
-      - "27017:27017"
+      - '27017:27017'
     volumes:
       - mongodb_data:/data/db
+
+  redis:
+    image: redis:7-alpine
+    container_name: customer-platform-redis
+    restart: unless-stopped
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    ports:
+      - '127.0.0.1:6379:6379'
 
 volumes:
   mysql_data:

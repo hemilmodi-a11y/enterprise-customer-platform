@@ -11,6 +11,7 @@ import { RequestsModule } from './requests/requests.module';
 import { ServicesModule } from './services/services.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { CacheModule } from './cache/cache.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { NotificationsModule } from './notifications/notifications.module';
       validationSchema: envValidationSchema,
     }),
 
+    CacheModule,
     DatabaseModule,
     UsersModule,
     AuthModule,

@@ -10,18 +10,26 @@ import {
   Post,
   Query,
   Req,
+  UploadedFile,
+  UseInterceptors,
   UseGuards,
 } from '@nestjs/common';
 import { Request } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
+import 'multer';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
+  ApiBody,
   ApiCreatedResponse,
+  ApiConsumes,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiParam,
   ApiQuery,
+  ApiResponse,
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
@@ -38,7 +46,14 @@ import {
   ServiceRequestResponseDto,
 } from './dto/request-response.dto';
 import { UpdateRequestStatusDto } from './dto/update-request-status.dto';
+import {
+  RequestAttachmentDownloadDto,
+  RequestAttachmentResponseDto,
+} from './dto/request-attachment-response.dto';
+import { RequestAttachmentsService } from './request-attachments.service';
 import { RequestsService } from './requests.service';
+
+const MAX_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 
 type AuthenticatedRequest = Request & {
   user: AuthenticatedUser;
@@ -49,7 +64,10 @@ type AuthenticatedRequest = Request & {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('api/v1/requests')
 export class RequestsController {
-  constructor(private readonly requestsService: RequestsService) {}
+  constructor(
+    private readonly requestsService: RequestsService,
+    private readonly attachmentsService: RequestAttachmentsService,
+  ) {}
 
   @Post()
   @Roles('Customer')
@@ -201,5 +219,79 @@ export class RequestsController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.requestsService.assign(id, dto, request.user);
+  }
+
+  @Post(':id/attachments')
+  @Roles('Customer', 'Admin', 'Manager', 'SupportAgent')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_ATTACHMENT_SIZE_BYTES, files: 1 },
+    }),
+  )
+  @ApiOperation({ summary: 'Upload a document to a service request' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiCreatedResponse({ type: RequestAttachmentResponseDto })
+  @ApiBadRequestResponse({
+    description: 'Missing file, unsupported format, or content mismatch',
+  })
+  @ApiResponse({ status: 413, description: 'Document exceeds 10 MB' })
+  @ApiForbiddenResponse({ description: 'Not authorized for this request' })
+  @ApiNotFoundResponse({ description: 'Service request not found' })
+  @ApiResponse({
+    status: 503,
+    description: 'Private document storage is unavailable or unconfigured',
+  })
+  uploadAttachment(
+    @Param('id', ParseIntPipe) id: number,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.attachmentsService.upload(id, file, request.user);
+  }
+
+  @Get(':id/attachments')
+  @Roles('Customer', 'Admin', 'Manager', 'SupportAgent')
+  @ApiOperation({ summary: 'List request document metadata' })
+  @ApiOkResponse({ type: RequestAttachmentResponseDto, isArray: true })
+  @ApiForbiddenResponse({ description: 'Not authorized for this request' })
+  @ApiNotFoundResponse({ description: 'Service request not found' })
+  listAttachments(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.attachmentsService.list(id, request.user);
+  }
+
+  @Get(':id/attachments/:attachmentId/download')
+  @Roles('Customer', 'Admin', 'Manager', 'SupportAgent')
+  @ApiOperation({
+    summary:
+      'Create a short-lived authorized download URL for a request document',
+  })
+  @ApiOkResponse({ type: RequestAttachmentDownloadDto })
+  @ApiParam({ name: 'attachmentId', type: Number })
+  @ApiForbiddenResponse({ description: 'Not authorized for this request' })
+  @ApiNotFoundResponse({ description: 'Document not found' })
+  @ApiResponse({
+    status: 503,
+    description: 'Private document storage is unavailable or unconfigured',
+  })
+  createAttachmentDownloadUrl(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('attachmentId', ParseIntPipe) attachmentId: number,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.attachmentsService.createDownloadUrl(
+      id,
+      attachmentId,
+      request.user,
+    );
   }
 }
