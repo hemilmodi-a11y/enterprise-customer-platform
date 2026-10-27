@@ -12,6 +12,7 @@ import { ServicesModule } from './services/services.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { CacheModule } from './cache/cache.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { CacheModule } from './cache/cache.module';
     RequestsModule,
     AnalyticsModule,
     NotificationsModule,
+    HealthModule,
   ],
 
   controllers: [AppController],

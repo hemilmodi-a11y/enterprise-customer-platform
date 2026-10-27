@@ -39,6 +39,8 @@ Service catalog caching: [Caching architecture and configuration](../docs/cachin
 
 Service request documents: [File upload and private S3 storage](../docs/file-uploads.md).
 
+AWS deployment architecture: [AWS cloud deployment design](../docs/aws-cloud-deployment.md).
+
 The NestJS API serves Swagger UI at `http://localhost:3000/api/docs` and its
 OpenAPI JSON at `http://localhost:3000/api/docs-json` by default. Set
 `SWAGGER_ENABLED=false` to disable both routes.

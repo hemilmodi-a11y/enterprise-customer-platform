@@ -9,7 +9,7 @@ export function createOpenApiDocument(app: INestApplication): OpenAPIObject {
     .setTitle('Enterprise Customer Platform API')
     .setDescription(
       [
-        'REST API for customer, service, service-request, document upload, authentication, notification, and analytics workflows.',
+        'REST API for customer, service, service-request, document upload, authentication, notification, analytics, and health workflows.',
         'Business routes use the URI version prefix /api/v1. Protected operations require a bearer JWT and may additionally require a documented role.',
       ].join('\n\n'),
     )
@@ -31,6 +31,7 @@ export function createOpenApiDocument(app: INestApplication): OpenAPIObject {
     .addTag('agents', 'Agent request workload queries')
     .addTag('notifications', 'User notifications')
     .addTag('analytics', 'Reporting and analytics')
+    .addTag('health', 'Container liveness and readiness probes')
     .build();
 
   return SwaggerModule.createDocument(app, config);

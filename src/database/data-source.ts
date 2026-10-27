@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { join } from 'node:path';
 import { DataSource } from 'typeorm';
 
 import { User } from '../users/user.entity';
@@ -36,5 +37,5 @@ export default new DataSource({
     ServiceRequestAttachment,
   ],
 
-  migrations: ['src/database/migrations/*.ts'],
+  migrations: [join(__dirname, 'migrations/*{.ts,.js}')],
 });
