@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { envValidationSchema } from './config/env.validation';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -22,6 +24,28 @@ import { HealthModule } from './health/health.module';
       validationSchema: envValidationSchema,
     }),
 
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        throttlers: [
+          {
+            ttl: config.get<number>('RATE_LIMIT_TTL_SECONDS', 60) * 1000,
+            limit: config.get<number>('RATE_LIMIT_MAX_REQUESTS', 120),
+            skipIf: (context) => {
+              const request = context
+                .switchToHttp()
+                .getRequest<{ path?: string }>();
+              return (
+                request.path === '/health/live' ||
+                request.path === '/health/ready'
+              );
+            },
+          },
+        ],
+      }),
+    }),
+
     CacheModule,
     DatabaseModule,
     UsersModule,
@@ -36,6 +60,6 @@ import { HealthModule } from './health/health.module';
 
   controllers: [AppController],
 
-  providers: [AppService],
+  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

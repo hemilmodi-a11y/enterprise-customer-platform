@@ -80,4 +80,16 @@ describe('environment validation', () => {
       }).error,
     ).toBeUndefined();
   });
+
+  it('treats blank optional S3 configuration as absent', () => {
+    const { error, value } = envValidationSchema.validate({
+      ...requiredConfiguration,
+      AWS_REGION: '',
+      S3_BUCKET: '',
+    });
+
+    expect(error).toBeUndefined();
+    expect(value.AWS_REGION).toBeUndefined();
+    expect(value.S3_BUCKET).toBeUndefined();
+  });
 });

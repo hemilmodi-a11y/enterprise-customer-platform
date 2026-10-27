@@ -225,6 +225,83 @@ describe('RequestsController HTTP integration', () => {
     );
   });
 
+  it('supports the request creation, assignment, and resolution HTTP workflow', async () => {
+    const submittedRequest = {
+      id: 91,
+      customerId: 7,
+      serviceId: 5,
+      description: 'Restore service at the warehouse.',
+      status: ServiceRequestStatus.SUBMITTED,
+    };
+    const assignedRequest = {
+      ...submittedRequest,
+      assignedToUserId: 15,
+      status: ServiceRequestStatus.ASSIGNED,
+    };
+
+    requestsService.create.mockResolvedValue(submittedRequest);
+    requestsService.assign.mockResolvedValue(assignedRequest);
+    requestsService.updateStatus
+      .mockResolvedValueOnce({
+        ...assignedRequest,
+        status: ServiceRequestStatus.IN_PROGRESS,
+      })
+      .mockResolvedValueOnce({
+        ...assignedRequest,
+        status: ServiceRequestStatus.RESOLVED,
+      });
+
+    const auth = { Authorization: 'Bearer test-token' };
+    const created = await request(app.getHttpServer())
+      .post('/api/v1/requests')
+      .set(auth)
+      .send({
+        serviceId: 5,
+        description: 'Restore service at the warehouse.',
+        priority: 'Normal',
+      })
+      .expect(201);
+    expect(created.body.id).toBe(91);
+
+    const assigned = await request(app.getHttpServer())
+      .post('/api/v1/requests/91/assign')
+      .set(auth)
+      .send({ agentId: 15 })
+      .expect(200);
+    expect(assigned.body.status).toBe(ServiceRequestStatus.ASSIGNED);
+
+    await request(app.getHttpServer())
+      .patch('/api/v1/requests/91/status')
+      .set(auth)
+      .send({ status: ServiceRequestStatus.IN_PROGRESS })
+      .expect(200);
+    const resolved = await request(app.getHttpServer())
+      .patch('/api/v1/requests/91/status')
+      .set(auth)
+      .send({ status: ServiceRequestStatus.RESOLVED })
+      .expect(200);
+    expect(resolved.body.status).toBe(ServiceRequestStatus.RESOLVED);
+
+    expect(requestsService.create).toHaveBeenCalledTimes(1);
+    expect(requestsService.assign).toHaveBeenCalledWith(
+      91,
+      { agentId: 15 },
+      customer,
+    );
+    expect(requestsService.updateStatus).toHaveBeenNthCalledWith(
+      1,
+      91,
+      { status: ServiceRequestStatus.IN_PROGRESS },
+      customer,
+    );
+    expect(requestsService.updateStatus).toHaveBeenNthCalledWith(
+      2,
+      91,
+      { status: ServiceRequestStatus.RESOLVED },
+      customer,
+    );
+  });
+
   it('rejects unexpected body properties and invalid request IDs', async () => {
     const auth = { Authorization: 'Bearer test-token' };
 

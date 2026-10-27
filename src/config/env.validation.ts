@@ -11,6 +11,18 @@ export const envValidationSchema = Joi.object({
 
   FASTIFY_PORT: Joi.number().port().default(3002),
 
+  CORS_ORIGINS: Joi.string().allow('').default(''),
+
+  RATE_LIMIT_TTL_SECONDS: Joi.number().integer().min(1).max(3600).default(60),
+
+  RATE_LIMIT_MAX_REQUESTS: Joi.number()
+    .integer()
+    .min(1)
+    .max(10000)
+    .default(120),
+
+  TRUST_PROXY_HOPS: Joi.number().integer().min(0).max(10).default(0),
+
   SWAGGER_ENABLED: Joi.boolean().default(true),
 
   CACHE_ENABLED: Joi.boolean().default(true),
@@ -31,9 +43,9 @@ export const envValidationSchema = Joi.object({
     .max(3600)
     .default(120),
 
-  AWS_REGION: Joi.string().min(1),
+  AWS_REGION: Joi.string().min(1).empty(''),
 
-  S3_BUCKET: Joi.string().min(3).max(63),
+  S3_BUCKET: Joi.string().min(3).max(63).empty(''),
 
   LOG_LEVEL: Joi.string()
     .valid('error', 'warn', 'info', 'debug')

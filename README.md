@@ -21,9 +21,12 @@
   <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
   [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
 
-## Description
+## Enterprise Customer Platform API
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+This NestJS API provides authenticated customer, service catalog, service
+request, notification, and attachment workflows backed by MySQL and MongoDB.
+The [repository README](../README.md) provides the project overview and local
+Docker startup instructions.
 
 Architecture decision: [Database selection — MySQL vs MongoDB](../docs/database-selection.md).
 
@@ -40,6 +43,22 @@ Service catalog caching: [Caching architecture and configuration](../docs/cachin
 Service request documents: [File upload and private S3 storage](../docs/file-uploads.md).
 
 AWS deployment architecture: [AWS cloud deployment design](../docs/aws-cloud-deployment.md).
+
+GCP architecture: [GCP cloud architecture](../docs/gcp-architecture.md).
+
+Docker startup: [local Docker environment](../docs/docker.md).
+
+Security controls: [security and production checklist](../docs/security.md).
+
+Performance planning: [scalability guide](../docs/scalability.md).
+
+Failure scenarios: [production failure handling](../docs/failure-handling.md).
+
+System architecture and ER diagram: [system architecture](../docs/system-architecture.md).
+
+Endpoint catalog: [API reference](../docs/api-reference.md).
+
+Project delivery backlog: [Jira-style backlog](../docs/jira-backlog.md).
 
 The NestJS API serves Swagger UI at `http://localhost:3000/api/docs` and its
 OpenAPI JSON at `http://localhost:3000/api/docs-json` by default. Set

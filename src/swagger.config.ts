@@ -11,6 +11,7 @@ export function createOpenApiDocument(app: INestApplication): OpenAPIObject {
       [
         'REST API for customer, service, service-request, document upload, authentication, notification, analytics, and health workflows.',
         'Business routes use the URI version prefix /api/v1. Protected operations require a bearer JWT and may additionally require a documented role.',
+        'Errors from the primary NestJS API use a request-correlated JSON envelope; unexpected server errors do not expose internal details.',
       ].join('\n\n'),
     )
     .setVersion('1.0')
