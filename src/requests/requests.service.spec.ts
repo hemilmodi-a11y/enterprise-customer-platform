@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -142,6 +143,50 @@ describe('RequestsService', () => {
     );
   });
 
+  it('returns an existing request for an idempotent retry with the same payload', async () => {
+    const existing = {
+      id: 99,
+      customerId: 11,
+      serviceId: 5,
+      description: 'We need internet restored.',
+      status: ServiceRequestStatus.SUBMITTED,
+      priority: ServiceRequestPriority.NORMAL,
+      idempotencyKey: 'retry-key-1',
+    } as ServiceRequest;
+    repositories.ServiceRequest.findOne.mockResolvedValueOnce(existing);
+
+    const response = await requestsService.create(
+      { serviceId: 5, description: 'We need internet restored.' },
+      customerActor,
+      'retry-key-1',
+    );
+
+    expect(response.id).toBe(99);
+    expect(repositories.ServiceRequest.save).not.toHaveBeenCalled();
+    expect(syncService.enqueueRequest).not.toHaveBeenCalled();
+    expect(notificationOutbox.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('rejects reusing an idempotency key with a different payload', async () => {
+    repositories.ServiceRequest.findOne.mockResolvedValueOnce({
+      id: 99,
+      customerId: 11,
+      serviceId: 5,
+      description: 'Original request description.',
+      status: ServiceRequestStatus.SUBMITTED,
+      priority: ServiceRequestPriority.NORMAL,
+      idempotencyKey: 'retry-key-1',
+    } as ServiceRequest);
+
+    await expect(
+      requestsService.create(
+        { serviceId: 5, description: 'Changed request description.' },
+        customerActor,
+        'retry-key-1',
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
   it('rejects unauthorized creation and invalid status changes', async () => {
     await expect(
       requestsService.create(
@@ -199,6 +244,10 @@ describe('RequestsService', () => {
       adminActor,
     );
 
+    expect(repositories.ServiceRequest.findOne).toHaveBeenCalledWith({
+      where: { id: 99 },
+      lock: { mode: 'pessimistic_write' },
+    });
     expect(notificationOutbox.enqueue).toHaveBeenCalledWith(
       expect.any(Object),
       `service-request:99:status:Assigned:In Progress:${timestamp.getTime()}`,

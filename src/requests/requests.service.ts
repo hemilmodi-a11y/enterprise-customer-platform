@@ -62,22 +62,53 @@ export class RequestsService {
   async create(
     dto: CreateRequestDto,
     actor: AuthenticatedUser,
+    requestIdempotencyKey?: string,
   ): Promise<ServiceRequestResponseDto> {
     this.assertCanCreateRequest(actor);
 
     const customer = await this.getCustomerProfileForUser(actor.userId);
-    const service = await this.getActiveService(dto.serviceId);
+    const idempotencyKey = this.validateIdempotencyKey(requestIdempotencyKey);
+    if (idempotencyKey) {
+      const existing = await this.findIdempotentRequest(
+        customer.id,
+        idempotencyKey,
+      );
+      if (existing) {
+        return this.returnIdempotentResponse(existing, dto);
+      }
+    }
 
     return this.dataSource.transaction(async (manager) => {
+      let requestCustomer = customer;
+      if (idempotencyKey) {
+        const lockedCustomer = await manager.getRepository(Customer).findOne({
+          where: { id: customer.id },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!lockedCustomer) {
+          throw new NotFoundException('Customer profile was not found');
+        }
+        requestCustomer = lockedCustomer;
+
+        const existing = await manager.getRepository(ServiceRequest).findOne({
+          where: { customerId: customer.id, idempotencyKey },
+        });
+        if (existing) {
+          return this.returnIdempotentResponse(existing, dto);
+        }
+      }
+
+      const service = await this.getActiveService(dto.serviceId, manager);
       const requestRepository = manager.getRepository(ServiceRequest);
       const request = requestRepository.create({
-        customer,
-        customerId: customer.id,
+        customer: requestCustomer,
+        customerId: requestCustomer.id,
         service,
         serviceId: service.id,
         description: dto.description.trim(),
         status: ServiceRequestStatus.SUBMITTED,
         priority: dto.priority ?? ServiceRequestPriority.NORMAL,
+        idempotencyKey: idempotencyKey ?? null,
       });
       const saved = await requestRepository.save(request);
       await this.syncService.enqueueRequest(manager, saved.id);
@@ -169,6 +200,7 @@ export class RequestsService {
       const requestRepository = manager.getRepository(ServiceRequest);
       const request = await requestRepository.findOne({
         where: { id },
+        lock: { mode: 'pessimistic_write' },
       });
       if (!request) {
         throw new NotFoundException(`Service request with id ${id} not found`);
@@ -411,12 +443,13 @@ export class RequestsService {
     }
   }
 
-  private async getActiveService(id: number): Promise<CatalogService> {
-    const service = await this.dataSource
-      .getRepository(CatalogService)
-      .findOne({
-        where: { id, status: ServiceStatus.ACTIVE },
-      });
+  private async getActiveService(
+    id: number,
+    manager: EntityManager,
+  ): Promise<CatalogService> {
+    const service = await manager.getRepository(CatalogService).findOne({
+      where: { id, status: ServiceStatus.ACTIVE },
+    });
 
     if (!service) {
       throw new NotFoundException(`Active service with id ${id} not found`);
@@ -475,6 +508,43 @@ export class RequestsService {
         'Only customers can submit a service request',
       );
     }
+  }
+
+  private validateIdempotencyKey(key?: string): string | null {
+    if (key === undefined) {
+      return null;
+    }
+    if (!/^[A-Za-z0-9._~-]{1,128}$/.test(key)) {
+      throw new BadRequestException(
+        'Idempotency-Key must contain 1 to 128 URL-safe characters',
+      );
+    }
+    return key;
+  }
+
+  private findIdempotentRequest(
+    customerId: number,
+    idempotencyKey: string,
+  ): Promise<ServiceRequest | null> {
+    return this.dataSource.getRepository(ServiceRequest).findOne({
+      where: { customerId, idempotencyKey },
+    });
+  }
+
+  private returnIdempotentResponse(
+    existing: ServiceRequest,
+    dto: CreateRequestDto,
+  ): ServiceRequestResponseDto {
+    const matchesOriginalPayload =
+      existing.serviceId === dto.serviceId &&
+      existing.description === dto.description.trim() &&
+      existing.priority === (dto.priority ?? ServiceRequestPriority.NORMAL);
+    if (!matchesOriginalPayload) {
+      throw new ConflictException(
+        'Idempotency-Key was already used with a different request payload',
+      );
+    }
+    return this.toResponse(existing);
   }
 
   private assertCanReadAgentRequests(actor: AuthenticatedUser): void {

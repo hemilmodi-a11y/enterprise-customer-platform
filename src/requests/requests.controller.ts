@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -23,7 +24,9 @@ import {
   ApiBody,
   ApiCreatedResponse,
   ApiConsumes,
+  ApiConflictResponse,
   ApiForbiddenResponse,
+  ApiHeader,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -74,10 +77,24 @@ export class RequestsController {
   @ApiOperation({ summary: 'Create a service request' })
   @ApiCreatedResponse({ type: ServiceRequestResponseDto })
   @ApiBadRequestResponse({ description: 'Invalid request payload' })
+  @ApiConflictResponse({
+    description:
+      'Idempotency-Key was already used with a different request payload',
+  })
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description:
+      'Optional retry key; repeated submissions with the same payload return the original request.',
+  })
   @ApiForbiddenResponse({ description: 'Customer role required' })
   @ApiUnauthorizedResponse({ description: 'Authentication required' })
-  create(@Body() dto: CreateRequestDto, @Req() request: AuthenticatedRequest) {
-    return this.requestsService.create(dto, request.user);
+  create(
+    @Body() dto: CreateRequestDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.requestsService.create(dto, request.user, idempotencyKey);
   }
 
   @Get()

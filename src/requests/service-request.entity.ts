@@ -19,11 +19,18 @@ import { ServiceRequestPriority } from './service-request-priority.enum';
 @Index('IDX_service_requests_customer_status', ['customerId', 'status'])
 @Index('IDX_service_requests_service_status', ['serviceId', 'status'])
 @Index('IDX_service_requests_assignee_status', ['assignedToUserId', 'status'])
-@Index(
-  'IDX_service_requests_agent_priority_status_created',
-  ['assignedToUserId', 'priority', 'status', 'createdAt'],
-)
+@Index('IDX_service_requests_agent_priority_status_created', [
+  'assignedToUserId',
+  'priority',
+  'status',
+  'createdAt',
+])
 @Index('IDX_service_requests_created_at', ['createdAt'])
+@Index(
+  'UQ_service_requests_customer_idempotency_key',
+  ['customerId', 'idempotencyKey'],
+  { unique: true },
+)
 export class ServiceRequest {
   @PrimaryGeneratedColumn()
   id: number;
@@ -44,6 +51,14 @@ export class ServiceRequest {
 
   @Column({ type: 'text' })
   description: string;
+
+  @Column({
+    type: 'varchar',
+    length: 128,
+    name: 'idempotency_key',
+    nullable: true,
+  })
+  idempotencyKey: string | null;
 
   @Column({
     type: 'enum',
