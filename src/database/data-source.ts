@@ -13,6 +13,8 @@ import { CatalogService } from '../services/catalog-service.entity';
 import { ServiceRequestSyncOutbox } from '../mongodb/service-request-sync-outbox.entity';
 import { NotificationOutbox } from '../notifications/notification-outbox.entity';
 import { ServiceRequestAttachment } from '../requests/request-attachment.entity';
+import { KnowledgeDocument } from '../knowledge-base/knowledge-document.entity';
+import { KnowledgeDocumentHead } from '../knowledge-base/knowledge-document-head.entity';
 
 export default new DataSource({
   type: 'mysql',
@@ -35,6 +37,8 @@ export default new DataSource({
     ServiceRequestSyncOutbox,
     NotificationOutbox,
     ServiceRequestAttachment,
+    KnowledgeDocument,
+    KnowledgeDocumentHead,
   ],
 
   migrations: [join(__dirname, 'migrations/*{.ts,.js}')],

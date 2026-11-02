@@ -42,6 +42,8 @@ Service catalog caching: [Caching architecture and configuration](../docs/cachin
 
 Service request documents: [File upload and private S3 storage](../docs/file-uploads.md).
 
+Enterprise knowledge documents: [knowledge-base API and versioning](../docs/knowledge-base.md).
+
 AWS deployment architecture: [AWS cloud deployment design](../docs/aws-cloud-deployment.md).
 
 GCP architecture: [GCP cloud architecture](../docs/gcp-architecture.md).

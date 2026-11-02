@@ -15,6 +15,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { CacheModule } from './cache/cache.module';
 import { HealthModule } from './health/health.module';
+import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { HealthModule } from './health/health.module';
     AnalyticsModule,
     NotificationsModule,
     HealthModule,
+    KnowledgeBaseModule,
   ],
 
   controllers: [AppController],
