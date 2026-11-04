@@ -35,6 +35,40 @@ export const envValidationSchema = Joi.object({
 
   AI_RETRIEVAL_LIMIT: Joi.number().integer().min(1).max(10).default(5),
 
+  RAG_CHUNK_SIZE: Joi.number().integer().min(200).max(4000).default(1000),
+
+  RAG_CHUNK_OVERLAP: Joi.number().integer().min(0).max(1000).default(150),
+
+  RAG_TOP_K: Joi.number().integer().min(1).max(20).default(5),
+
+  RAG_SIMILARITY_THRESHOLD: Joi.number().min(0).max(1).default(0.3),
+
+  RAG_EMBEDDING_MODEL: Joi.string().min(1).default('text-embedding-3-small'),
+
+  RAG_EMBEDDING_DIMENSIONS: Joi.number()
+    .integer()
+    .min(1)
+    .max(3072)
+    .default(1536),
+
+  RAG_EMBEDDING_BATCH_SIZE: Joi.number().integer().min(1).max(256).default(64),
+
+  RAG_PROVIDER_TIMEOUT_MS: Joi.number()
+    .integer()
+    .min(1000)
+    .max(60000)
+    .default(15000),
+
+  QDRANT_URL: Joi.string()
+    .uri({ scheme: ['http', 'https'] })
+    .default('http://localhost:6333'),
+
+  QDRANT_API_KEY: Joi.string().min(1).empty(''),
+
+  QDRANT_COLLECTION: Joi.string()
+    .pattern(/^[a-zA-Z0-9_-]+$/)
+    .default('enterprise_knowledge'),
+
   TRUST_PROXY_HOPS: Joi.number().integer().min(0).max(10).default(0),
 
   SWAGGER_ENABLED: Joi.boolean().default(true),

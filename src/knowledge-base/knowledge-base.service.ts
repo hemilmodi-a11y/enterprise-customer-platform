@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { randomUUID } from 'node:crypto';
-import { Brackets, DataSource, SelectQueryBuilder } from 'typeorm';
+import { Brackets, DataSource, In, SelectQueryBuilder } from 'typeorm';
 
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { CreateKnowledgeDocumentDto } from './dto/create-knowledge-document.dto';
@@ -51,34 +51,6 @@ const SUMMARY_COLUMNS = [
   'document.createdAt',
   'document.updatedAt',
 ];
-
-const ASSISTANT_STOP_WORDS = new Set([
-  'about',
-  'after',
-  'are',
-  'can',
-  'could',
-  'does',
-  'for',
-  'from',
-  'how',
-  'into',
-  'please',
-  'should',
-  'that',
-  'the',
-  'their',
-  'there',
-  'this',
-  'use',
-  'what',
-  'when',
-  'where',
-  'which',
-  'with',
-  'would',
-  'your',
-]);
 
 @Injectable()
 export class KnowledgeBaseService {
@@ -149,11 +121,13 @@ export class KnowledgeBaseService {
     };
   }
 
-  async searchForAssistant(
-    question: string,
+  async findLatestAssistantDocuments(
+    documentIds: string[],
     actor: AuthenticatedUser,
-    limit: number,
   ): Promise<KnowledgeDocument[]> {
+    if (documentIds.length === 0) {
+      return [];
+    }
     const isCustomer = actor.roles.includes('Customer');
     const isSupportAgent = actor.roles.includes('SupportAgent');
     if (!isCustomer && !isSupportAgent) {
@@ -162,22 +136,11 @@ export class KnowledgeBaseService {
       );
     }
 
-    const terms = [
-      ...new Set(
-        question
-          .toLowerCase()
-          .match(/[a-z0-9]{3,}/g)
-          ?.filter((term) => !ASSISTANT_STOP_WORDS.has(term)) ?? [],
-      ),
-    ].slice(0, 8);
-    if (terms.length === 0) {
-      return [];
-    }
-
     const queryBuilder = this.dataSource
       .getRepository(KnowledgeDocument)
       .createQueryBuilder('document')
       .select([
+        'document.id',
         'document.documentId',
         'document.version',
         'document.name',
@@ -186,6 +149,7 @@ export class KnowledgeBaseService {
         'document.accessLevel',
         'document.content',
       ])
+      .where('document.documentId IN (:...documentIds)', { documentIds })
       .andWhere('document.status = :assistantPublishedStatus', {
         assistantPublishedStatus: KnowledgeDocumentStatus.PUBLISHED,
       });
@@ -196,24 +160,7 @@ export class KnowledgeBaseService {
         assistantPublicAccess: KnowledgeDocumentAccessLevel.PUBLIC,
       });
     }
-
-    queryBuilder.andWhere(
-      new Brackets((termsQuery) => {
-        terms.forEach((term, index) => {
-          const parameter = `assistantTerm${index}`;
-          termsQuery.orWhere(
-            `(LOWER(document.name) LIKE :${parameter} OR LOWER(document.description) LIKE :${parameter} OR LOWER(document.category) LIKE :${parameter} OR LOWER(document.department) LIKE :${parameter} OR LOWER(document.content) LIKE :${parameter})`,
-            { [parameter]: `%${term}%` },
-          );
-        });
-      }),
-    );
-
-    return queryBuilder
-      .orderBy('document.updatedAt', 'DESC')
-      .addOrderBy('document.documentId', 'ASC')
-      .take(limit)
-      .getMany();
+    return queryBuilder.getMany();
   }
 
   async findLatest(

@@ -65,7 +65,6 @@ describe('KnowledgeBaseService', () => {
       take: jest.fn().mockReturnThis(),
       setLock: jest.fn().mockReturnThis(),
       getOne: jest.fn().mockResolvedValue(document),
-      getMany: jest.fn().mockResolvedValue([document]),
       getManyAndCount: jest.fn().mockResolvedValue([[document], 1]),
     };
     repository = {
@@ -223,46 +222,5 @@ describe('KnowledgeBaseService', () => {
       expect.stringContaining('archived.status = :archivedStatus'),
       { archivedStatus: KnowledgeDocumentStatus.ARCHIVED },
     );
-  });
-
-  it('limits customer assistant retrieval to published public documents', async () => {
-    const customer: AuthenticatedUser = {
-      userId: 3,
-      email: 'customer@example.test',
-      roles: ['Customer'],
-    };
-
-    await service.searchForAssistant(
-      'How can I troubleshoot my internet connection?',
-      customer,
-      5,
-    );
-
-    expect(queryBuilder.select).toHaveBeenCalledWith(
-      expect.arrayContaining(['document.content']),
-    );
-    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
-      'document.accessLevel = :assistantPublicAccess',
-      { assistantPublicAccess: KnowledgeDocumentAccessLevel.PUBLIC },
-    );
-    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
-      'document.status = :assistantPublishedStatus',
-      { assistantPublishedStatus: KnowledgeDocumentStatus.PUBLISHED },
-    );
-    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
-      expect.stringContaining('NOT EXISTS'),
-      expect.objectContaining({
-        visibleStatus: KnowledgeDocumentStatus.PUBLISHED,
-        confidentialAccess: KnowledgeDocumentAccessLevel.CONFIDENTIAL,
-      }),
-    );
-    expect(queryBuilder.getMany).toHaveBeenCalled();
-  });
-
-  it('denies assistant retrieval to roles outside Customer and SupportAgent', async () => {
-    await expect(
-      service.searchForAssistant('Question about policy', admin, 5),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(repository.createQueryBuilder).not.toHaveBeenCalled();
   });
 });

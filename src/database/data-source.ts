@@ -15,6 +15,7 @@ import { NotificationOutbox } from '../notifications/notification-outbox.entity'
 import { ServiceRequestAttachment } from '../requests/request-attachment.entity';
 import { KnowledgeDocument } from '../knowledge-base/knowledge-document.entity';
 import { KnowledgeDocumentHead } from '../knowledge-base/knowledge-document-head.entity';
+import { KnowledgeDocumentIndex } from '../knowledge-base/knowledge-document-index.entity';
 
 export default new DataSource({
   type: 'mysql',
@@ -39,6 +40,7 @@ export default new DataSource({
     ServiceRequestAttachment,
     KnowledgeDocument,
     KnowledgeDocumentHead,
+    KnowledgeDocumentIndex,
   ],
 
   migrations: [join(__dirname, 'migrations/*{.ts,.js}')],

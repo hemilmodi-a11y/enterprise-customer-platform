@@ -7,7 +7,6 @@ import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { KnowledgeDocument } from '../knowledge-base/knowledge-document.entity';
 import { KnowledgeDocumentCategory } from '../knowledge-base/knowledge-document.enums';
 import { AiService } from './ai.service';
 import { AskQuestionDto } from './dto/ask-question.dto';
@@ -18,30 +17,34 @@ const customer: AuthenticatedUser = {
   roles: ['Customer'],
 };
 
-const document = {
+const chunk = {
   documentId: '4cb1c6d3-5179-40df-8a24-6f9fd5c413a6',
-  name: 'Internet troubleshooting',
+  documentName: 'Internet troubleshooting',
   category: KnowledgeDocumentCategory.TROUBLESHOOTING_GUIDE,
   department: 'Customer Support',
+  version: 2,
+  chunkIndex: 1,
+  sourceReference: 'router-guide.pdf',
   content: 'Check the router power and network cable.',
-} as KnowledgeDocument;
+  similarity: 0.81,
+};
 
 describe('AiService', () => {
   let service: AiService;
-  let knowledgeBase: { searchForAssistant: jest.Mock };
+  let indexing: { searchForAssistant: jest.Mock };
   let provider: { generateAnswer: jest.Mock };
   let config: { get: jest.Mock };
 
   beforeEach(() => {
-    knowledgeBase = {
-      searchForAssistant: jest.fn().mockResolvedValue([document]),
+    indexing = {
+      searchForAssistant: jest.fn().mockResolvedValue([chunk]),
     };
     provider = {
       generateAnswer: jest.fn().mockResolvedValue('Check the router power.'),
     };
     config = { get: jest.fn().mockReturnValue(5) };
     service = new AiService(
-      knowledgeBase as never,
+      indexing as never,
       provider as never,
       config as never,
     );
@@ -53,7 +56,7 @@ describe('AiService', () => {
       customer,
     );
 
-    expect(knowledgeBase.searchForAssistant).toHaveBeenCalledWith(
+    expect(indexing.searchForAssistant).toHaveBeenCalledWith(
       'How do I troubleshoot internet?',
       customer,
       5,
@@ -62,11 +65,14 @@ describe('AiService', () => {
       'How do I troubleshoot internet?',
       [
         {
-          documentId: document.documentId,
-          name: document.name,
-          category: document.category,
-          department: document.department,
-          content: document.content,
+          documentId: chunk.documentId,
+          name: chunk.documentName,
+          category: chunk.category,
+          department: chunk.department,
+          version: chunk.version,
+          chunkIndex: chunk.chunkIndex,
+          sourceReference: chunk.sourceReference,
+          content: chunk.content,
         },
       ],
     );
@@ -74,9 +80,12 @@ describe('AiService', () => {
       answer: 'Check the router power.',
       sources: [
         {
-          documentId: document.documentId,
-          documentName: document.name,
-          category: document.category,
+          documentId: chunk.documentId,
+          documentName: chunk.documentName,
+          category: chunk.category,
+          version: chunk.version,
+          chunkIndex: chunk.chunkIndex,
+          sourceReference: chunk.sourceReference,
         },
       ],
       confidence: null,
@@ -84,7 +93,7 @@ describe('AiService', () => {
   });
 
   it('returns a safe fallback and skips the provider when retrieval finds nothing', async () => {
-    knowledgeBase.searchForAssistant.mockResolvedValueOnce([]);
+    indexing.searchForAssistant.mockResolvedValueOnce([]);
 
     const response = await service.askQuestion('Unknown policy?', customer);
 
@@ -95,10 +104,10 @@ describe('AiService', () => {
   });
 
   it('caps per-document and total retrieved context before invoking the provider', async () => {
-    knowledgeBase.searchForAssistant.mockResolvedValueOnce(
+    indexing.searchForAssistant.mockResolvedValueOnce(
       Array.from({ length: 5 }, (_, index) => ({
-        ...document,
-        documentId: `${index}-${document.documentId}`,
+        ...chunk,
+        documentId: `${index}-${chunk.documentId}`,
         content: 'x'.repeat(10_000),
       })),
     );

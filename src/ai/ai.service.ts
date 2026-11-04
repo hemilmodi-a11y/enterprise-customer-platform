@@ -2,7 +2,7 @@ import { BadGatewayException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { KnowledgeBaseService } from '../knowledge-base/knowledge-base.service';
+import { KnowledgeIndexingService } from '../knowledge-base/knowledge-indexing.service';
 import { AiCustomerSupportResponseDto } from './dto/ai-response.dto';
 import { LlmProviderService } from './llm-provider.service';
 
@@ -14,7 +14,7 @@ const MAX_TOTAL_CONTEXT_CHARS = 24000;
 @Injectable()
 export class AiService {
   constructor(
-    private readonly knowledgeBase: KnowledgeBaseService,
+    private readonly knowledgeIndexing: KnowledgeIndexingService,
     private readonly llmProvider: LlmProviderService,
     private readonly config: ConfigService,
   ) {}
@@ -23,12 +23,12 @@ export class AiService {
     question: string,
     actor: AuthenticatedUser,
   ): Promise<AiCustomerSupportResponseDto> {
-    const documents = await this.knowledgeBase.searchForAssistant(
+    const chunks = await this.knowledgeIndexing.searchForAssistant(
       question,
       actor,
-      this.config.get<number>('AI_RETRIEVAL_LIMIT', 5),
+      this.config.get<number>('RAG_TOP_K', 5),
     );
-    if (documents.length === 0) {
+    if (chunks.length === 0) {
       return {
         answer: NO_KNOWLEDGE_ANSWER,
         sources: [],
@@ -37,11 +37,11 @@ export class AiService {
     }
 
     let remainingContextChars = MAX_TOTAL_CONTEXT_CHARS;
-    const contextDocuments = documents.flatMap((document) => {
+    const contextDocuments = chunks.flatMap((chunk) => {
       if (remainingContextChars <= 0) {
         return [];
       }
-      const content = document.content.slice(
+      const content = chunk.content.slice(
         0,
         Math.min(MAX_DOCUMENT_CONTEXT_CHARS, remainingContextChars),
       );
@@ -49,10 +49,13 @@ export class AiService {
       return content.trim()
         ? [
             {
-              documentId: document.documentId,
-              name: document.name,
-              category: document.category,
-              department: document.department,
+              documentId: chunk.documentId,
+              name: chunk.documentName,
+              category: chunk.category,
+              department: chunk.department,
+              version: chunk.version,
+              chunkIndex: chunk.chunkIndex,
+              sourceReference: chunk.sourceReference,
               content,
             },
           ]
@@ -80,6 +83,9 @@ export class AiService {
         documentId: document.documentId,
         documentName: document.name,
         category: document.category,
+        version: document.version,
+        chunkIndex: document.chunkIndex,
+        sourceReference: document.sourceReference,
       })),
       confidence: null,
     };

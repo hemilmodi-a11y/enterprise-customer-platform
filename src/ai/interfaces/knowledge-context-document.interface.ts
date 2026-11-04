@@ -5,5 +5,8 @@ export interface KnowledgeContextDocument {
   name: string;
   category: KnowledgeDocumentCategory;
   department: string;
+  version: number;
+  chunkIndex: number;
+  sourceReference: string;
   content: string;
 }

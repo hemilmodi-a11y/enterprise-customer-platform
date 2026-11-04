@@ -14,6 +14,7 @@ import { Role } from '../src/roles/role.entity';
 import { UserRole } from '../src/roles/user-role.entity';
 import { User } from '../src/users/user.entity';
 import { LlmProviderService } from '../src/ai/llm-provider.service';
+import { KnowledgeIndexingService } from '../src/knowledge-base/knowledge-indexing.service';
 import { AppModule } from './../src/app.module';
 
 describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
@@ -33,6 +34,62 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
       .fn()
       .mockResolvedValue('Follow the published troubleshooting instructions.'),
   };
+  const mockedKnowledgeIndexing = {
+    indexDocument: jest.fn().mockImplementation(async (document) => ({
+      documentId: document.documentId,
+      version: document.version,
+      status: document.status === 'PUBLISHED' ? 'INDEXED' : 'NOT_PUBLISHED',
+      chunkCount: document.status === 'PUBLISHED' ? 1 : 0,
+      errorCode: null,
+      indexedAt: new Date(),
+      updatedAt: new Date(),
+    })),
+    getIndexStatus: jest.fn().mockImplementation(async (documentId) => ({
+      documentId,
+      version: 1,
+      status: 'INDEXED',
+      chunkCount: 1,
+      errorCode: null,
+      indexedAt: new Date(),
+      updatedAt: new Date(),
+    })),
+    searchForAssistant: jest.fn(async (question, actor) => {
+      if (question.includes('publicassistantguide')) {
+        return [
+          {
+            documentId: '4cb1c6d3-5179-40df-8a24-6f9fd5c413a6',
+            documentName: 'E2E Public Assistant Guide',
+            category: 'TROUBLESHOOTING_GUIDE',
+            department: 'Customer Support',
+            version: 1,
+            chunkIndex: 0,
+            sourceReference: 'public-guide.txt',
+            content: 'Follow this public instruction.',
+            similarity: 0.82,
+          },
+        ];
+      }
+      if (
+        actor.roles.includes('SupportAgent') &&
+        question.includes('privateassistantguide')
+      ) {
+        return [
+          {
+            documentId: '7cb1c6d3-5179-40df-8a24-6f9fd5c413a6',
+            documentName: 'E2E Internal Assistant Guide',
+            category: 'SERVICE_GUIDELINE',
+            department: 'Customer Support',
+            version: 1,
+            chunkIndex: 0,
+            sourceReference: 'internal-guide.txt',
+            content: 'Follow this internal instruction.',
+            similarity: 0.82,
+          },
+        ];
+      }
+      return [];
+    }),
+  };
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -40,6 +97,8 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
     })
       .overrideProvider(LlmProviderService)
       .useValue(mockedLlmProvider)
+      .overrideProvider(KnowledgeIndexingService)
+      .useValue(mockedKnowledgeIndexing)
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -412,7 +471,7 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
       })
       .expect(201);
     const privateContent = `privateassistantguide${suffix.replaceAll('-', '')}`;
-    const internalDocument = await request(app.getHttpServer())
+    await request(app.getHttpServer())
       .post('/api/v1/knowledge-base/documents')
       .auth(adminToken, { type: 'bearer' })
       .send({
@@ -424,6 +483,50 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
         content: `Internal instruction: ${privateContent}.`,
       })
       .expect(201);
+    await request(app.getHttpServer())
+      .post(
+        `/api/v1/knowledge-base/documents/${publicDocument.body.documentId as string}/index`,
+      )
+      .auth(adminToken, { type: 'bearer' })
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(
+        `/api/v1/knowledge-base/documents/${publicDocument.body.documentId as string}/index-status`,
+      )
+      .auth(adminToken, { type: 'bearer' })
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body).toMatchObject({
+          documentId: publicDocument.body.documentId,
+          version: 1,
+          status: 'INDEXED',
+          chunkCount: 1,
+        });
+      });
+    await request(app.getHttpServer())
+      .get(
+        `/api/v1/knowledge-base/documents/${publicDocument.body.documentId as string}/index-status`,
+      )
+      .auth(agentToken, { type: 'bearer' })
+      .expect(403);
+
+    const ingestedDocument = await request(app.getHttpServer())
+      .post('/api/v1/knowledge-base/documents/ingest')
+      .auth(adminToken, { type: 'bearer' })
+      .field('name', `E2E Text Ingestion ${suffix}`)
+      .field('category', 'FAQ')
+      .field('department', 'Customer Support')
+      .attach('file', Buffer.from('Ingested text content.'), {
+        filename: 'ingestion.txt',
+        contentType: 'text/plain',
+      })
+      .expect(201);
+    expect(ingestedDocument.body).toMatchObject({
+      name: `E2E Text Ingestion ${suffix}`,
+      content: 'Ingested text content.',
+      mimeType: 'text/plain',
+      fileName: 'ingestion.txt',
+    });
 
     await request(app.getHttpServer())
       .post('/api/v1/ai/customer-support/ask')
@@ -451,8 +554,11 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
       confidence: null,
       sources: [
         {
-          documentId: publicDocument.body.documentId,
-          documentName: `E2E Public Assistant Guide ${suffix}`,
+          documentId: '4cb1c6d3-5179-40df-8a24-6f9fd5c413a6',
+          documentName: 'E2E Public Assistant Guide',
+          version: 1,
+          chunkIndex: 0,
+          sourceReference: 'public-guide.txt',
         },
       ],
     });
@@ -475,8 +581,10 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
       .expect(200);
     expect(agentAnswer.body.sources).toMatchObject([
       {
-        documentId: internalDocument.body.documentId,
-        documentName: `E2E Internal Assistant Guide ${suffix}`,
+        documentId: '7cb1c6d3-5179-40df-8a24-6f9fd5c413a6',
+        documentName: 'E2E Internal Assistant Guide',
+        version: 1,
+        chunkIndex: 0,
       },
     ]);
 

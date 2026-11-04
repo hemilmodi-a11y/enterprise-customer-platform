@@ -11,6 +11,15 @@ export class AiAnswerSourceDto {
 
   @ApiProperty({ enum: KnowledgeDocumentCategory })
   category: KnowledgeDocumentCategory;
+
+  @ApiProperty({ minimum: 1 })
+  version: number;
+
+  @ApiProperty({ minimum: 0 })
+  chunkIndex: number;
+
+  @ApiProperty()
+  sourceReference: string;
 }
 
 export class AiCustomerSupportResponseDto {

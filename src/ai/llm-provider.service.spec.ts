@@ -18,6 +18,9 @@ const contextDocument: KnowledgeContextDocument = {
   name: 'Router guide',
   category: KnowledgeDocumentCategory.TROUBLESHOOTING_GUIDE,
   department: 'Customer Support',
+  version: 1,
+  chunkIndex: 0,
+  sourceReference: 'router-guide.txt',
   content: 'Restart the router after checking the power cable.',
 };
 

@@ -19,7 +19,7 @@ import {
 
 export const MAX_KNOWLEDGE_CONTENT_LENGTH = 100_000;
 
-const KNOWLEDGE_SOURCE_MIME_TYPES = [
+export const KNOWLEDGE_SOURCE_MIME_TYPES = [
   'text/plain',
   'text/markdown',
   'application/pdf',
@@ -27,6 +27,17 @@ const KNOWLEDGE_SOURCE_MIME_TYPES = [
   'image/png',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ] as const;
+
+export type KnowledgeSourceMimeType =
+  (typeof KNOWLEDGE_SOURCE_MIME_TYPES)[number];
+
+export function isKnowledgeSourceMimeType(
+  mimeType: string,
+): mimeType is KnowledgeSourceMimeType {
+  return KNOWLEDGE_SOURCE_MIME_TYPES.some(
+    (supportedMimeType) => supportedMimeType === mimeType,
+  );
+}
 
 export class CreateKnowledgeDocumentDto {
   @ApiProperty({ maxLength: 255, example: 'Customer Refund Policy' })
@@ -76,7 +87,7 @@ export class CreateKnowledgeDocumentDto {
   })
   @IsOptional()
   @IsIn(KNOWLEDGE_SOURCE_MIME_TYPES)
-  mimeType?: (typeof KNOWLEDGE_SOURCE_MIME_TYPES)[number];
+  mimeType?: KnowledgeSourceMimeType;
 
   @ApiPropertyOptional({ maxLength: 255 })
   @IsOptional()
