@@ -13,6 +13,7 @@ import { CatalogService } from '../src/services/catalog-service.entity';
 import { Role } from '../src/roles/role.entity';
 import { UserRole } from '../src/roles/user-role.entity';
 import { User } from '../src/users/user.entity';
+import { LlmProviderService } from '../src/ai/llm-provider.service';
 import { AppModule } from './../src/app.module';
 
 describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
@@ -20,16 +21,26 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
   let dataSource: DataSource;
   let adminToken: string;
   let agentToken: string;
+  let customerToken: string;
   let agentId: number;
   const testPassword = 'E2eValidationPassword123';
   const suffix = randomUUID();
   const adminEmail = `e2e-admin-${suffix}@example.test`;
   const agentEmail = `e2e-agent-${suffix}@example.test`;
+  const customerEmail = `e2e-ai-customer-${suffix}@example.test`;
+  const mockedLlmProvider = {
+    generateAnswer: jest
+      .fn()
+      .mockResolvedValue('Follow the published troubleshooting instructions.'),
+  };
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(LlmProviderService)
+      .useValue(mockedLlmProvider)
+      .compile();
 
     app = moduleFixture.createNestApplication();
     const requestLoggingMiddleware = new RequestLoggingMiddleware();
@@ -56,7 +67,8 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
     }
     const adminRole = roleByName.get('Admin');
     const supportAgentRole = roleByName.get('SupportAgent');
-    if (!adminRole || !supportAgentRole) {
+    const customerRole = roleByName.get('Customer');
+    if (!adminRole || !supportAgentRole || !customerRole) {
       throw new Error('E2E authorization roles were not created');
     }
 
@@ -91,6 +103,20 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
       userRoles.create({ user: agent, role: supportAgentRole }),
     );
 
+    const customer = await users.save(
+      users.create({
+        email: customerEmail,
+        passwordHash,
+        firstName: 'E2E',
+        lastName: 'AI Customer',
+        isActive: true,
+        isAvailable: true,
+      }),
+    );
+    await userRoles.save(
+      userRoles.create({ user: customer, role: customerRole }),
+    );
+
     const login = await request(app.getHttpServer())
       .post('/api/v1/auth/login')
       .send({ email: adminEmail, password: testPassword })
@@ -101,6 +127,11 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
       .send({ email: agentEmail, password: testPassword })
       .expect(200);
     agentToken = agentLogin.body.accessToken as string;
+    const customerLogin = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email: customerEmail, password: testPassword })
+      .expect(200);
+    customerToken = customerLogin.body.accessToken as string;
   });
 
   afterAll(async () => {
@@ -364,5 +395,111 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
       .get(`/api/v1/knowledge-base/documents/${documentId}`)
       .auth(agentToken, { type: 'bearer' })
       .expect(404);
+  });
+
+  it('answers customer questions from public knowledge and blocks restricted sources', async () => {
+    const publicContent = `publicassistantguide${suffix.replaceAll('-', '')}`;
+    const publicDocument = await request(app.getHttpServer())
+      .post('/api/v1/knowledge-base/documents')
+      .auth(adminToken, { type: 'bearer' })
+      .send({
+        name: `E2E Public Assistant Guide ${suffix}`,
+        category: 'TROUBLESHOOTING_GUIDE',
+        department: 'Customer Support',
+        accessLevel: 'PUBLIC',
+        status: 'PUBLISHED',
+        content: `Follow this public instruction: ${publicContent}.`,
+      })
+      .expect(201);
+    const privateContent = `privateassistantguide${suffix.replaceAll('-', '')}`;
+    const internalDocument = await request(app.getHttpServer())
+      .post('/api/v1/knowledge-base/documents')
+      .auth(adminToken, { type: 'bearer' })
+      .send({
+        name: `E2E Internal Assistant Guide ${suffix}`,
+        category: 'SERVICE_GUIDELINE',
+        department: 'Customer Support',
+        accessLevel: 'INTERNAL',
+        status: 'PUBLISHED',
+        content: `Internal instruction: ${privateContent}.`,
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/api/v1/ai/customer-support/ask')
+      .send({ question: 'What should I do?' })
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/api/v1/ai/customer-support/ask')
+      .auth(adminToken, { type: 'bearer' })
+      .send({ question: 'What should I do?' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post('/api/v1/ai/customer-support/ask')
+      .auth(customerToken, { type: 'bearer' })
+      .send({ question: '  ' })
+      .expect(400);
+
+    mockedLlmProvider.generateAnswer.mockClear();
+    const answer = await request(app.getHttpServer())
+      .post('/api/v1/ai/customer-support/ask')
+      .auth(customerToken, { type: 'bearer' })
+      .send({ question: `How do I use ${publicContent}?` })
+      .expect(200);
+    expect(answer.body).toMatchObject({
+      answer: 'Follow the published troubleshooting instructions.',
+      confidence: null,
+      sources: [
+        {
+          documentId: publicDocument.body.documentId,
+          documentName: `E2E Public Assistant Guide ${suffix}`,
+        },
+      ],
+    });
+
+    const privateAnswer = await request(app.getHttpServer())
+      .post('/api/v1/ai/customer-support/ask')
+      .auth(customerToken, { type: 'bearer' })
+      .send({ question: `What is ${privateContent}?` })
+      .expect(200);
+    expect(privateAnswer.body.sources).toEqual([]);
+    expect(privateAnswer.body.answer).toContain(
+      'could not find published information',
+    );
+    expect(mockedLlmProvider.generateAnswer).toHaveBeenCalledTimes(1);
+
+    const agentAnswer = await request(app.getHttpServer())
+      .post('/api/v1/ai/customer-support/ask')
+      .auth(agentToken, { type: 'bearer' })
+      .send({ question: `What is ${privateContent}?` })
+      .expect(200);
+    expect(agentAnswer.body.sources).toMatchObject([
+      {
+        documentId: internalDocument.body.documentId,
+        documentName: `E2E Internal Assistant Guide ${suffix}`,
+      },
+    ]);
+
+    const confidentialContent = `confidentialassistantguide${suffix.replaceAll('-', '')}`;
+    await request(app.getHttpServer())
+      .post('/api/v1/knowledge-base/documents')
+      .auth(adminToken, { type: 'bearer' })
+      .send({
+        name: `E2E Confidential Assistant Guide ${suffix}`,
+        category: 'ESCALATION_PROCEDURE',
+        department: 'Security',
+        accessLevel: 'CONFIDENTIAL',
+        status: 'PUBLISHED',
+        content: `Confidential instruction: ${confidentialContent}.`,
+      })
+      .expect(201);
+    for (const token of [customerToken, agentToken]) {
+      const confidentialAnswer = await request(app.getHttpServer())
+        .post('/api/v1/ai/customer-support/ask')
+        .auth(token, { type: 'bearer' })
+        .send({ question: `What is ${confidentialContent}?` })
+        .expect(200);
+      expect(confidentialAnswer.body.sources).toEqual([]);
+    }
   });
 });

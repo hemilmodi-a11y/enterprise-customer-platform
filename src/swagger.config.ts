@@ -32,6 +32,10 @@ export function createOpenApiDocument(app: INestApplication): OpenAPIObject {
     .addTag('agents', 'Agent request workload queries')
     .addTag('notifications', 'User notifications')
     .addTag('analytics', 'Reporting and analytics')
+    .addTag(
+      'ai-customer-support',
+      'Knowledge-backed customer support assistant',
+    )
     .addTag('health', 'Container liveness and readiness probes')
     .build();
 

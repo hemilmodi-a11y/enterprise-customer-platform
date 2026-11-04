@@ -21,6 +21,20 @@ export const envValidationSchema = Joi.object({
     .max(10000)
     .default(120),
 
+  AI_PROVIDER: Joi.string().valid('openai').default('openai'),
+
+  AI_API_KEY: Joi.string().min(1).empty(''),
+
+  AI_MODEL: Joi.string().min(1).default('gpt-4o-mini'),
+
+  AI_TEMPERATURE: Joi.number().min(0).max(1).default(0.2),
+
+  AI_MAX_TOKENS: Joi.number().integer().min(1).max(2048).default(512),
+
+  AI_TIMEOUT_MS: Joi.number().integer().min(1000).max(60000).default(15000),
+
+  AI_RETRIEVAL_LIMIT: Joi.number().integer().min(1).max(10).default(5),
+
   TRUST_PROXY_HOPS: Joi.number().integer().min(0).max(10).default(0),
 
   SWAGGER_ENABLED: Joi.boolean().default(true),

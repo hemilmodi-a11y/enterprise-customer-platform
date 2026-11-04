@@ -16,6 +16,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { CacheModule } from './cache/cache.module';
 import { HealthModule } from './health/health.module';
 import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
+import { AiModule } from './ai/ai.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { KnowledgeBaseModule } from './knowledge-base/knowledge-base.module';
     NotificationsModule,
     HealthModule,
     KnowledgeBaseModule,
+    AiModule,
   ],
 
   controllers: [AppController],
