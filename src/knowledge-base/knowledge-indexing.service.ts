@@ -22,6 +22,7 @@ import {
 } from './knowledge-document-index.entity';
 import { KnowledgeBaseService } from './knowledge-base.service';
 import { KnowledgeChunkingService } from '../ai/rag/knowledge-chunking.service';
+import { RagQueryRewriterService } from '../ai/rag/rag-query-rewriter.service';
 import { RagVectorStoreService } from '../ai/rag/rag-vector-store.service';
 import { KnowledgeDocumentStatus } from './knowledge-document.enums';
 
@@ -46,6 +47,7 @@ export class KnowledgeIndexingService {
     private readonly indexRepository: Repository<KnowledgeDocumentIndex>,
     private readonly knowledgeBase: KnowledgeBaseService,
     private readonly chunking: KnowledgeChunkingService,
+    private readonly queryRewriter: RagQueryRewriterService,
     private readonly vectorStoreService: RagVectorStoreService,
     private readonly config: ConfigService,
   ) {}
@@ -158,13 +160,19 @@ export class KnowledgeIndexingService {
     }
 
     try {
+      const { searchQuery, terms } = this.queryRewriter.rewrite(question);
+      if (!terms.length) {
+        return [];
+      }
+
+      const candidateCount = this.config.get<number>('RAG_CANDIDATE_K', 20);
       const store = await this.vectorStoreService.getStore();
       const accessLevels = isCustomer
         ? ['PUBLIC']
         : ['PUBLIC', 'INTERNAL', 'RESTRICTED'];
-      const candidates = await store.similaritySearchWithScore(
-        question,
-        Math.min(limit * 4, 80),
+      const semanticCandidates = await store.similaritySearchWithScore(
+        searchQuery,
+        candidateCount,
         {
           must: [
             {
@@ -178,62 +186,176 @@ export class KnowledgeIndexingService {
           ],
         },
       );
-      const threshold = this.config.get<number>(
-        'RAG_SIMILARITY_THRESHOLD',
-        0.3,
-      );
-      const relevant = candidates.filter(([, score]) => score >= threshold);
-      if (relevant.length === 0) {
-        return [];
-      }
+      const keywordDocuments =
+        await this.knowledgeBase.searchLatestAssistantDocumentsByTerms(
+          terms,
+          actor,
+          candidateCount,
+        );
 
       const documentIds = [
         ...new Set(
-          relevant.map(([chunk]) => chunk.metadata.documentId as string),
+          [
+            ...semanticCandidates.map(([chunk]) => chunk.metadata.documentId),
+            ...keywordDocuments.map((document) => document.documentId),
+          ].filter(
+            (documentId): documentId is string =>
+              typeof documentId === 'string',
+          ),
         ),
       ];
+      if (documentIds.length === 0) {
+        return [];
+      }
       const currentDocuments =
         await this.knowledgeBase.findLatestAssistantDocuments(
           documentIds,
           actor,
         );
-      const currentVersions = new Map(
-        currentDocuments.map((document) => [
-          document.documentId,
-          document.version,
-        ]),
+      const authorizedDocuments = new Map(
+        currentDocuments.map((document) => [document.documentId, document]),
       );
-      const seen = new Set<string>();
-      return relevant
-        .flatMap(([chunk, similarity]) => {
-          const metadata = chunk.metadata;
-          const documentId = metadata.documentId as string;
-          const version = Number(metadata.version);
-          const chunkIndex = Number(metadata.chunkIndex);
-          const key = `${documentId}:${version}:${chunkIndex}`;
-          if (
-            currentVersions.get(documentId) !== version ||
-            seen.has(key) ||
-            !chunk.pageContent.trim()
-          ) {
-            return [];
-          }
-          seen.add(key);
-          return [
-            {
-              documentId,
-              documentName: String(metadata.documentName),
-              category: metadata.category as KnowledgeDocument['category'],
-              department: String(metadata.department),
-              version,
-              chunkIndex,
-              sourceReference: String(metadata.sourceReference),
-              content: chunk.pageContent,
-              similarity,
-            },
-          ];
+      const queryTerms = terms;
+      const candidates = new Map<
+        string,
+        KnowledgeRetrievedChunk & {
+          semanticScore: number;
+          keywordScore: number;
+        }
+      >();
+      const addCandidate = (
+        document: KnowledgeDocument,
+        chunkIndex: number,
+        content: string,
+        semanticScore: number,
+      ) => {
+        if (
+          !content.trim() ||
+          !Number.isInteger(chunkIndex) ||
+          chunkIndex < 0
+        ) {
+          return;
+        }
+        const key = `${document.documentId}:${document.version}:${chunkIndex}`;
+        const keywordScore = this.keywordScore(
+          queryTerms,
+          [content, document.name, document.category, document.department].join(
+            ' ',
+          ),
+        );
+        const existing = candidates.get(key);
+        if (existing) {
+          existing.semanticScore = Math.max(
+            existing.semanticScore,
+            semanticScore,
+          );
+          existing.keywordScore = Math.max(existing.keywordScore, keywordScore);
+          return;
+        }
+        candidates.set(key, {
+          documentId: document.documentId,
+          documentName: document.name,
+          category: document.category,
+          department: document.department,
+          version: document.version,
+          chunkIndex,
+          sourceReference: document.fileName ?? document.documentId,
+          content,
+          similarity: 0,
+          semanticScore,
+          keywordScore,
+        });
+      };
+
+      for (const [chunk, score] of semanticCandidates) {
+        const metadata = chunk.metadata;
+        const documentId = metadata.documentId;
+        const version = Number(metadata.version);
+        const chunkIndex = Number(metadata.chunkIndex);
+        if (typeof documentId !== 'string' || !Number.isInteger(version)) {
+          continue;
+        }
+        const document = authorizedDocuments.get(documentId);
+        if (!document || document.version !== version) {
+          continue;
+        }
+        addCandidate(
+          document,
+          chunkIndex,
+          chunk.pageContent,
+          Number.isFinite(score) ? Math.max(0, Math.min(score, 1)) : 0,
+        );
+      }
+
+      for (const candidateDocument of keywordDocuments) {
+        const document = authorizedDocuments.get(candidateDocument.documentId);
+        if (!document || document.version !== candidateDocument.version) {
+          continue;
+        }
+        const chunks = await this.chunking.split(document);
+        for (const chunk of chunks) {
+          addCandidate(
+            document,
+            Number(chunk.metadata.chunkIndex),
+            chunk.pageContent,
+            0,
+          );
+        }
+      }
+
+      const semanticWeight = this.config.get<number>(
+        'RAG_SEMANTIC_WEIGHT',
+        0.7,
+      );
+      const keywordWeight = this.config.get<number>('RAG_KEYWORD_WEIGHT', 0.3);
+      const weightTotal = semanticWeight + keywordWeight;
+      if (weightTotal <= 0) {
+        throw new Error('RAG hybrid weights must have a positive sum');
+      }
+      const threshold = this.config.get<number>(
+        'RAG_SIMILARITY_THRESHOLD',
+        0.3,
+      );
+      return [...candidates.values()]
+        .map((candidate) => {
+          candidate.similarity =
+            (candidate.semanticScore * semanticWeight +
+              candidate.keywordScore * keywordWeight) /
+            weightTotal;
+          return candidate;
         })
-        .slice(0, limit);
+        .filter((candidate) => candidate.similarity >= threshold)
+        .sort(
+          (left, right) =>
+            right.similarity - left.similarity ||
+            right.semanticScore - left.semanticScore ||
+            left.documentId.localeCompare(right.documentId) ||
+            left.chunkIndex - right.chunkIndex,
+        )
+        .slice(0, limit)
+        .map(
+          ({
+            documentId,
+            documentName,
+            category,
+            department,
+            version,
+            chunkIndex,
+            sourceReference,
+            content,
+            similarity,
+          }) => ({
+            documentId,
+            documentName,
+            category,
+            department,
+            version,
+            chunkIndex,
+            sourceReference,
+            content,
+            similarity,
+          }),
+        );
     } catch (error) {
       this.logger.error(
         JSON.stringify({
@@ -263,6 +385,15 @@ export class KnowledgeIndexingService {
         },
       ],
     };
+  }
+
+  private keywordScore(terms: string[], text: string): number {
+    if (terms.length === 0) {
+      return 0;
+    }
+    const textTerms = new Set(this.queryRewriter.extractTerms(text));
+    const matchedTerms = terms.filter((term) => textTerms.has(term)).length;
+    return matchedTerms / terms.length;
   }
 
   private pointId(documentId: string, version: number, chunkIndex: number) {

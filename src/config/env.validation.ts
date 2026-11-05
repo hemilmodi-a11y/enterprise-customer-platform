@@ -41,6 +41,14 @@ export const envValidationSchema = Joi.object({
 
   RAG_TOP_K: Joi.number().integer().min(1).max(20).default(5),
 
+  RAG_CANDIDATE_K: Joi.number().integer().min(1).max(100).default(20),
+
+  RAG_QUERY_REWRITING_ENABLED: Joi.boolean().default(true),
+
+  RAG_SEMANTIC_WEIGHT: Joi.number().min(0).max(1).default(0.7),
+
+  RAG_KEYWORD_WEIGHT: Joi.number().min(0).max(1).default(0.3),
+
   RAG_SIMILARITY_THRESHOLD: Joi.number().min(0).max(1).default(0.3),
 
   RAG_EMBEDDING_MODEL: Joi.string().min(1).default('text-embedding-3-small'),
@@ -116,4 +124,10 @@ export const envValidationSchema = Joi.object({
     .required(),
 })
   .with('AWS_REGION', 'S3_BUCKET')
-  .with('S3_BUCKET', 'AWS_REGION');
+  .with('S3_BUCKET', 'AWS_REGION')
+  .custom((value, helpers) => {
+    if (value.RAG_SEMANTIC_WEIGHT + value.RAG_KEYWORD_WEIGHT <= 0) {
+      return helpers.error('any.invalid');
+    }
+    return value;
+  }, 'RAG hybrid weights must have a positive sum');

@@ -147,7 +147,9 @@ export class KnowledgeBaseService {
         'document.category',
         'document.department',
         'document.accessLevel',
+        'document.fileName',
         'document.content',
+        'document.createdAt',
       ])
       .where('document.documentId IN (:...documentIds)', { documentIds })
       .andWhere('document.status = :assistantPublishedStatus', {
@@ -161,6 +163,87 @@ export class KnowledgeBaseService {
       });
     }
     return queryBuilder.getMany();
+  }
+
+  async searchLatestAssistantDocumentsByTerms(
+    terms: string[],
+    actor: AuthenticatedUser,
+    limit: number,
+  ): Promise<KnowledgeDocument[]> {
+    const isCustomer = actor.roles.includes('Customer');
+    const isSupportAgent = actor.roles.includes('SupportAgent');
+    if (!isCustomer && !isSupportAgent) {
+      throw new ForbiddenException(
+        'Customer or SupportAgent role required for the support assistant',
+      );
+    }
+
+    const safeTerms = [
+      ...new Set(
+        terms
+          .filter((term) =>
+            /^[\p{L}\p{N}]+(?:[._/-][\p{L}\p{N}]+)*$/u.test(term),
+          )
+          .map((term) => term.toLowerCase()),
+      ),
+    ].slice(0, 8);
+    if (safeTerms.length === 0) {
+      return [];
+    }
+
+    const queryBuilder = this.dataSource
+      .getRepository(KnowledgeDocument)
+      .createQueryBuilder('document')
+      .select([
+        'document.id',
+        'document.documentId',
+        'document.version',
+        'document.name',
+        'document.description',
+        'document.category',
+        'document.department',
+        'document.accessLevel',
+        'document.status',
+        'document.fileName',
+        'document.content',
+        'document.createdAt',
+      ])
+      .where(
+        new Brackets((termsQuery) => {
+          safeTerms.forEach((term, index) => {
+            const parameter = `assistantKeyword${index}`;
+            const condition = `(
+              LOWER(document.name) LIKE :${parameter} ESCAPE '!'
+              OR LOWER(COALESCE(document.description, '')) LIKE :${parameter} ESCAPE '!'
+              OR LOWER(document.category) LIKE :${parameter} ESCAPE '!'
+              OR LOWER(document.department) LIKE :${parameter} ESCAPE '!'
+              OR LOWER(document.content) LIKE :${parameter} ESCAPE '!'
+            )`;
+            const escapedTerm = term.replace(/[!%_]/g, '!$&');
+            const parameters = { [parameter]: `%${escapedTerm}%` };
+            if (index === 0) {
+              termsQuery.where(condition, parameters);
+            } else {
+              termsQuery.orWhere(condition, parameters);
+            }
+          });
+        }),
+      )
+      .andWhere('document.status = :assistantPublishedStatus', {
+        assistantPublishedStatus: KnowledgeDocumentStatus.PUBLISHED,
+      });
+
+    this.applyLatestVisibleVersion(queryBuilder, actor);
+    if (isCustomer) {
+      queryBuilder.andWhere('document.accessLevel = :assistantPublicAccess', {
+        assistantPublicAccess: KnowledgeDocumentAccessLevel.PUBLIC,
+      });
+    }
+
+    return queryBuilder
+      .orderBy('document.updatedAt', 'DESC')
+      .take(Math.max(1, Math.min(limit, 100)))
+      .getMany();
   }
 
   async findLatest(

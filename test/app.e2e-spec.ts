@@ -15,6 +15,7 @@ import { UserRole } from '../src/roles/user-role.entity';
 import { User } from '../src/users/user.entity';
 import { LlmProviderService } from '../src/ai/llm-provider.service';
 import { KnowledgeIndexingService } from '../src/knowledge-base/knowledge-indexing.service';
+import { KnowledgeBaseService } from '../src/knowledge-base/knowledge-base.service';
 import { AppModule } from './../src/app.module';
 
 describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
@@ -471,7 +472,7 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
       })
       .expect(201);
     const privateContent = `privateassistantguide${suffix.replaceAll('-', '')}`;
-    await request(app.getHttpServer())
+    const privateDocument = await request(app.getHttpServer())
       .post('/api/v1/knowledge-base/documents')
       .auth(adminToken, { type: 'bearer' })
       .send({
@@ -483,6 +484,42 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
         content: `Internal instruction: ${privateContent}.`,
       })
       .expect(201);
+    const knowledgeBase = app.get(KnowledgeBaseService);
+    const customerActor = {
+      userId: 0,
+      email: customerEmail,
+      roles: ['Customer'],
+    };
+    const agentActor = {
+      userId: agentId,
+      email: agentEmail,
+      roles: ['SupportAgent'],
+    };
+    const customerKeywordMatches =
+      await knowledgeBase.searchLatestAssistantDocumentsByTerms(
+        [publicContent],
+        customerActor,
+        5,
+      );
+    expect(customerKeywordMatches.map(({ documentId }) => documentId)).toContain(
+      publicDocument.body.documentId,
+    );
+    await expect(
+      knowledgeBase.searchLatestAssistantDocumentsByTerms(
+        [privateContent],
+        customerActor,
+        5,
+      ),
+    ).resolves.toEqual([]);
+    const agentKeywordMatches =
+      await knowledgeBase.searchLatestAssistantDocumentsByTerms(
+        [privateContent],
+        agentActor,
+        5,
+      );
+    expect(agentKeywordMatches.map(({ documentId }) => documentId)).toContain(
+      privateDocument.body.documentId,
+    );
     await request(app.getHttpServer())
       .post(
         `/api/v1/knowledge-base/documents/${publicDocument.body.documentId as string}/index`,

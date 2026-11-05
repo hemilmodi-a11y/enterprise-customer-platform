@@ -65,6 +65,7 @@ describe('KnowledgeBaseService', () => {
       take: jest.fn().mockReturnThis(),
       setLock: jest.fn().mockReturnThis(),
       getOne: jest.fn().mockResolvedValue(document),
+      getMany: jest.fn().mockResolvedValue([document]),
       getManyAndCount: jest.fn().mockResolvedValue([[document], 1]),
     };
     repository = {
@@ -139,6 +140,44 @@ describe('KnowledgeBaseService', () => {
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(transactionRepository.save).not.toHaveBeenCalled();
+  });
+
+  it('searches published latest versions by bounded terms with public-only customer access', async () => {
+    const customer: AuthenticatedUser = {
+      userId: 3,
+      email: 'customer@example.test',
+      roles: ['Customer'],
+    };
+
+    await expect(
+      service.searchLatestAssistantDocumentsByTerms(
+        ['refund', 'err_503', 'bad%term'],
+        customer,
+        20,
+      ),
+    ).resolves.toEqual([document]);
+
+    expect(repository.createQueryBuilder).toHaveBeenCalledWith('document');
+    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+      'document.status = :assistantPublishedStatus',
+      { assistantPublishedStatus: KnowledgeDocumentStatus.PUBLISHED },
+    );
+    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+      'document.accessLevel = :assistantPublicAccess',
+      { assistantPublicAccess: KnowledgeDocumentAccessLevel.PUBLIC },
+    );
+    expect(queryBuilder.orderBy).toHaveBeenCalledWith(
+      'document.updatedAt',
+      'DESC',
+    );
+    expect(queryBuilder.take).toHaveBeenCalledWith(20);
+  });
+
+  it('rejects callers outside customer and support-agent roles for keyword search', async () => {
+    await expect(
+      service.searchLatestAssistantDocumentsByTerms(['refund'], admin, 20),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(repository.createQueryBuilder).not.toHaveBeenCalled();
   });
 
   it('creates an immutable next version and defaults edits to draft', async () => {

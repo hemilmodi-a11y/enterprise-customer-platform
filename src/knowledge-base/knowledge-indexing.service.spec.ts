@@ -11,6 +11,7 @@ import {
 } from './knowledge-document.enums';
 import { KnowledgeIndexStatus } from './knowledge-document-index.entity';
 import { KnowledgeIndexingService } from './knowledge-indexing.service';
+import { RagQueryRewriterService } from '../ai/rag/rag-query-rewriter.service';
 
 const supportAgent: AuthenticatedUser = {
   userId: 7,
@@ -50,8 +51,12 @@ describe('KnowledgeIndexingService', () => {
     save: jest.Mock;
     findOneBy: jest.Mock;
   };
-  let knowledgeBase: { findLatestAssistantDocuments: jest.Mock };
+  let knowledgeBase: {
+    findLatestAssistantDocuments: jest.Mock;
+    searchLatestAssistantDocumentsByTerms: jest.Mock;
+  };
   let chunking: { split: jest.Mock };
+  let configValues: Record<string, number>;
   let store: {
     addDocuments: jest.Mock;
     delete: jest.Mock;
@@ -59,6 +64,12 @@ describe('KnowledgeIndexingService', () => {
   };
 
   beforeEach(() => {
+    configValues = {
+      RAG_CANDIDATE_K: 20,
+      RAG_SIMILARITY_THRESHOLD: 0.3,
+      RAG_SEMANTIC_WEIGHT: 0.7,
+      RAG_KEYWORD_WEIGHT: 0.3,
+    };
     repository = {
       create: jest.fn((value: object) => value),
       save: jest.fn(async (value: object) => value),
@@ -66,6 +77,7 @@ describe('KnowledgeIndexingService', () => {
     };
     knowledgeBase = {
       findLatestAssistantDocuments: jest.fn().mockResolvedValue([document]),
+      searchLatestAssistantDocumentsByTerms: jest.fn().mockResolvedValue([]),
     };
     chunking = {
       split: jest.fn().mockResolvedValue([
@@ -84,8 +96,18 @@ describe('KnowledgeIndexingService', () => {
       repository as never,
       knowledgeBase as never,
       chunking as never,
+      new RagQueryRewriterService({
+        get: jest.fn((key: string, defaultValue: unknown) =>
+          key === 'RAG_QUERY_REWRITING_ENABLED' ? true : defaultValue,
+        ),
+      } as never),
       { getStore: jest.fn().mockResolvedValue(store) } as never,
-      { get: jest.fn().mockReturnValue(0.3) } as never,
+      {
+        get: jest.fn(
+          (key: string, defaultValue: unknown) =>
+            configValues[key] ?? defaultValue,
+        ),
+      } as never,
     );
   });
 
@@ -174,8 +196,113 @@ describe('KnowledgeIndexingService', () => {
       documentId: document.documentId,
       version: document.version,
       content: document.content,
-      similarity: 0.81,
     });
+    expect(results[0]?.similarity).toBeCloseTo(0.717);
+  });
+
+  it('uses keyword retrieval to recover exact terms and merges duplicate chunks before reranking', async () => {
+    const exactChunk = new Document({
+      pageContent: 'Check the network cable.',
+      metadata: {
+        documentId: document.documentId,
+        version: document.version,
+        chunkIndex: 0,
+      },
+    });
+    store.similaritySearchWithScore.mockResolvedValue([[exactChunk, 0.4]]);
+    knowledgeBase.searchLatestAssistantDocumentsByTerms.mockResolvedValue([
+      document,
+    ]);
+
+    const results = await service.searchForAssistant(
+      'Can you explain network cable?',
+      supportAgent,
+      5,
+    );
+
+    expect(store.similaritySearchWithScore).toHaveBeenCalledWith(
+      'network cable?',
+      20,
+      expect.any(Object),
+    );
+    expect(
+      knowledgeBase.searchLatestAssistantDocumentsByTerms,
+    ).toHaveBeenCalledWith(['network', 'cable'], supportAgent, 20);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      documentId: document.documentId,
+      chunkIndex: 0,
+      similarity: 0.58,
+    });
+    expect(chunking.split).toHaveBeenCalledWith(document);
+  });
+
+  it('filters candidates below the configured hybrid similarity threshold', async () => {
+    configValues.RAG_SIMILARITY_THRESHOLD = 0.9;
+    store.similaritySearchWithScore.mockResolvedValue([
+      [
+        new Document({
+          pageContent: 'A loosely related result.',
+          metadata: {
+            documentId: document.documentId,
+            version: document.version,
+            chunkIndex: 0,
+          },
+        }),
+        0.5,
+      ],
+    ]);
+
+    await expect(
+      service.searchForAssistant('network cable', supportAgent, 5),
+    ).resolves.toEqual([]);
+  });
+
+  it('filters customer vector searches to public content', async () => {
+    const customer: AuthenticatedUser = {
+      ...supportAgent,
+      roles: ['Customer'],
+    };
+    knowledgeBase.findLatestAssistantDocuments.mockResolvedValue([
+      { ...document, accessLevel: KnowledgeDocumentAccessLevel.PUBLIC },
+    ]);
+    store.similaritySearchWithScore.mockResolvedValue([
+      [
+        new Document({
+          pageContent: document.content,
+          metadata: {
+            documentId: document.documentId,
+            version: document.version,
+            chunkIndex: 0,
+          },
+        }),
+        0.9,
+      ],
+    ]);
+
+    const results = await service.searchForAssistant(
+      'network cable',
+      customer,
+      5,
+    );
+
+    expect(store.similaritySearchWithScore).toHaveBeenCalledWith(
+      'network cable',
+      20,
+      {
+        must: [
+          {
+            key: 'metadata.status',
+            match: { value: KnowledgeDocumentStatus.PUBLISHED },
+          },
+          {
+            key: 'metadata.accessLevel',
+            match: { any: ['PUBLIC'] },
+          },
+        ],
+      },
+    );
+    expect(results).toHaveLength(1);
   });
 
   it('rejects callers outside the assistant roles before querying vectors', async () => {
@@ -213,5 +340,31 @@ describe('KnowledgeIndexingService', () => {
     await expect(
       service.searchForAssistant('network connection', supportAgent, 5),
     ).resolves.toEqual([]);
+  });
+
+  it('maps vector-store failures to a safe service error', async () => {
+    const unavailableService = new KnowledgeIndexingService(
+      repository as never,
+      knowledgeBase as never,
+      chunking as never,
+      new RagQueryRewriterService({
+        get: jest.fn(() => true),
+      } as never),
+      {
+        getStore: jest.fn().mockRejectedValue(new Error('private endpoint')),
+      } as never,
+      {
+        get: jest.fn(
+          (key: string, defaultValue: unknown) =>
+            configValues[key] ?? defaultValue,
+        ),
+      } as never,
+    );
+
+    await expect(
+      unavailableService.searchForAssistant('network cable', supportAgent, 5),
+    ).rejects.toThrow(
+      'Knowledge indexing or retrieval is temporarily unavailable',
+    );
   });
 });

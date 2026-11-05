@@ -92,4 +92,25 @@ describe('environment validation', () => {
     expect(value.AWS_REGION).toBeUndefined();
     expect(value.S3_BUCKET).toBeUndefined();
   });
+
+  it('validates advanced RAG options and requires a non-zero hybrid weight', () => {
+    const defaults = envValidationSchema.validate(requiredConfiguration);
+    expect(defaults.error).toBeUndefined();
+    expect(defaults.value.RAG_CANDIDATE_K).toBe(20);
+    expect(defaults.value.RAG_QUERY_REWRITING_ENABLED).toBe(true);
+
+    expect(
+      envValidationSchema.validate({
+        ...requiredConfiguration,
+        RAG_SEMANTIC_WEIGHT: 0,
+        RAG_KEYWORD_WEIGHT: 0,
+      }).error,
+    ).toBeDefined();
+    expect(
+      envValidationSchema.validate({
+        ...requiredConfiguration,
+        RAG_CANDIDATE_K: 101,
+      }).error,
+    ).toBeDefined();
+  });
 });
