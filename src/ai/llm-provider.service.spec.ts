@@ -7,6 +7,7 @@ import {
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { ChatOpenAI } from '@langchain/openai';
 import { AIMessage } from '@langchain/core/messages';
+import { OutputParserException } from '@langchain/core/output_parsers';
 
 import { KnowledgeDocumentCategory } from '../knowledge-base/knowledge-document.enums';
 import { KnowledgeContextDocument } from './interfaces/knowledge-context-document.interface';
@@ -120,5 +121,69 @@ describe('LlmProviderService', () => {
       service.generateAnswer('Question', [contextDocument]),
     ).rejects.toBeInstanceOf(BadGatewayException);
     invoke.mockRestore();
+  });
+
+  it('uses strict JSON-schema output for reusable AI classification', async () => {
+    const invoke = jest.fn().mockResolvedValue({
+      category: 'SECURITY',
+      priority: 'Urgent',
+      confidence: 0.98,
+      reason: 'An unauthorized transaction is reported.',
+    });
+    const withStructuredOutput = jest.fn().mockReturnValue({ invoke });
+    jest
+      .spyOn(service, 'createModel')
+      .mockReturnValue({ withStructuredOutput } as never);
+    const schema = {
+      type: 'object',
+      required: ['category'],
+      properties: { category: { type: 'string' } },
+    };
+
+    await expect(
+      service.generateStructuredOutput(
+        'Classify tickets.',
+        { title: 'Unauthorized charge', description: 'Unknown charge.' },
+        schema,
+        'ticket_classification',
+      ),
+    ).resolves.toMatchObject({ category: 'SECURITY' });
+
+    expect(withStructuredOutput).toHaveBeenCalledWith(schema, {
+      method: 'jsonSchema',
+      strict: true,
+      name: 'ticket_classification',
+    });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    const messages = invoke.mock.calls[0]?.[0] as Array<{
+      content: string;
+    }>;
+    expect(messages[1]?.content).toContain('"title":"Unauthorized charge"');
+  });
+
+  it('maps malformed structured output and OpenAI authentication failures safely', async () => {
+    const invoke = jest
+      .fn()
+      .mockRejectedValueOnce(
+        new OutputParserException(
+          'Invalid JSON response',
+          '{"private":"data"}',
+        ),
+      )
+      .mockRejectedValueOnce(
+        Object.assign(new Error('invalid credential'), { status: 401 }),
+      );
+    jest.spyOn(service, 'createModel').mockReturnValue({
+      withStructuredOutput: jest.fn().mockReturnValue({ invoke }),
+    } as never);
+    const input = { title: 'Test', description: 'Test ticket.' };
+    const schema = { type: 'object' };
+
+    await expect(
+      service.generateStructuredOutput('Classify.', input, schema, 'result'),
+    ).rejects.toBeInstanceOf(BadGatewayException);
+    await expect(
+      service.generateStructuredOutput('Classify.', input, schema, 'result'),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 });

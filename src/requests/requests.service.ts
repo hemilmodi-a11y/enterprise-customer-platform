@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -25,6 +26,7 @@ import { ServiceStatus } from '../services/service-status.enum';
 import { ServiceRequestSyncService } from '../mongodb/service-request-sync.service';
 import { NotificationOutboxService } from '../notifications/notification-outbox.service';
 import { NotificationType } from '../notifications/notification.schema';
+import { TicketClassificationService } from '../ai/ticket-classification.service';
 import { AssignRequestDto } from './dto/assign-request.dto';
 import { CreateRequestDto } from './dto/create-request.dto';
 import { ListAgentRequestsQueryDto } from './dto/list-agent-requests-query.dto';
@@ -42,6 +44,7 @@ import {
   ServiceRequestPriority,
 } from './service-request-priority.enum';
 import { ServiceRequest } from './service-request.entity';
+import { AiClassificationStatus } from './ai-classification-status.enum';
 
 const SORT_COLUMNS = {
   createdAt: 'request.createdAt',
@@ -52,11 +55,14 @@ const SORT_COLUMNS = {
 
 @Injectable()
 export class RequestsService {
+  private readonly logger = new Logger(RequestsService.name);
+
   constructor(
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly syncService: ServiceRequestSyncService,
     private readonly notificationOutbox: NotificationOutboxService,
+    private readonly ticketClassification: TicketClassificationService,
   ) {}
 
   async create(
@@ -78,7 +84,8 @@ export class RequestsService {
       }
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    const classificationEnabled = this.ticketClassification.isEnabled();
+    const creation = await this.dataSource.transaction(async (manager) => {
       let requestCustomer = customer;
       if (idempotencyKey) {
         const lockedCustomer = await manager.getRepository(Customer).findOne({
@@ -94,7 +101,8 @@ export class RequestsService {
           where: { customerId: customer.id, idempotencyKey },
         });
         if (existing) {
-          return this.returnIdempotentResponse(existing, dto);
+          this.returnIdempotentResponse(existing, dto);
+          return { request: existing, created: false };
         }
       }
 
@@ -108,6 +116,14 @@ export class RequestsService {
         description: dto.description.trim(),
         status: ServiceRequestStatus.SUBMITTED,
         priority: dto.priority ?? ServiceRequestPriority.NORMAL,
+        aiClassificationCategory: null,
+        aiSuggestedPriority: null,
+        aiClassificationConfidence: null,
+        aiClassificationReason: null,
+        aiClassificationStatus: classificationEnabled
+          ? AiClassificationStatus.PENDING
+          : AiClassificationStatus.DISABLED,
+        aiClassifiedAt: null,
         idempotencyKey: idempotencyKey ?? null,
       });
       const saved = await requestRepository.save(request);
@@ -123,8 +139,82 @@ export class RequestsService {
           relatedServiceRequestId: saved.id,
         },
       );
-      return this.toResponse(saved);
+      return { request: saved, created: true };
     });
+
+    if (!creation.created) {
+      return this.toResponse(creation.request);
+    }
+
+    if (classificationEnabled) {
+      await this.classifyCreatedRequest(
+        creation.request,
+        creation.request.service?.name ??
+          `Service ${creation.request.serviceId}`,
+      );
+    }
+    return this.toResponse(creation.request);
+  }
+
+  private async classifyCreatedRequest(
+    request: ServiceRequest,
+    serviceName: string,
+  ): Promise<void> {
+    try {
+      const classification = await this.ticketClassification.classify({
+        title: serviceName,
+        description: request.description,
+        serviceName,
+      });
+      const fields = {
+        aiClassificationCategory: classification.category,
+        aiSuggestedPriority: classification.priority,
+        aiClassificationConfidence: classification.confidence,
+        aiClassificationReason: classification.reason,
+        aiClassificationStatus: AiClassificationStatus.COMPLETED,
+        aiClassifiedAt: new Date(),
+      };
+      const result = await this.dataSource
+        .getRepository(ServiceRequest)
+        .update(request.id, fields);
+      if (!result.affected) {
+        throw new Error('Ticket classification update affected no row');
+      }
+      Object.assign(request, fields);
+    } catch (error) {
+      const failedFields = {
+        aiClassificationStatus: AiClassificationStatus.FAILED,
+        aiClassifiedAt: null,
+      };
+      request.aiClassificationStatus = AiClassificationStatus.FAILED;
+      request.aiClassifiedAt = null;
+      this.logger.warn(
+        JSON.stringify({
+          event: 'ticket_classification_failed',
+          requestId: request.id,
+          errorType: error instanceof Error ? error.name : 'UnknownError',
+        }),
+      );
+      try {
+        const result = await this.dataSource
+          .getRepository(ServiceRequest)
+          .update(request.id, failedFields);
+        if (!result.affected) {
+          throw new Error('Classification failure update affected no row');
+        }
+      } catch (persistenceError) {
+        this.logger.error(
+          JSON.stringify({
+            event: 'ticket_classification_status_persist_failed',
+            requestId: request.id,
+            errorType:
+              persistenceError instanceof Error
+                ? persistenceError.name
+                : 'UnknownError',
+          }),
+        );
+      }
+    }
   }
 
   async list(query: ListRequestsQueryDto, actor: AuthenticatedUser) {
@@ -159,7 +249,9 @@ export class RequestsService {
     const [items, total] = await queryBuilder.getManyAndCount();
 
     return {
-      items: items.map((request) => this.toResponse(request)),
+      items: items.map((request) =>
+        this.toResponse(request, this.canViewAiClassification(actor)),
+      ),
       total,
       page: query.page,
       limit: query.limit,
@@ -179,7 +271,7 @@ export class RequestsService {
     this.assertValidId(id);
     const request = await this.getRequestOrThrow(id);
     this.assertCanAccessRequest(actor, request);
-    return this.toResponse(request);
+    return this.toResponse(request, this.canViewAiClassification(actor));
   }
 
   async updateStatus(
@@ -226,7 +318,7 @@ export class RequestsService {
           relatedServiceRequestId: saved.id,
         },
       );
-      return this.toResponse(saved);
+      return this.toResponse(saved, this.canViewAiClassification(actor));
     });
   }
 
@@ -297,7 +389,7 @@ export class RequestsService {
         request.status === ServiceRequestStatus.ASSIGNED &&
         request.assignedToUserId === targetAgent.id
       ) {
-        return this.toResponse(request);
+        return this.toResponse(request, this.canViewAiClassification(actor));
       }
 
       request.assignedToUserId = targetAgent.id;
@@ -336,7 +428,7 @@ export class RequestsService {
           },
         );
       }
-      return this.toResponse(saved);
+      return this.toResponse(saved, this.canViewAiClassification(actor));
     });
   }
 
@@ -737,14 +829,23 @@ export class RequestsService {
     return actor.roles.includes('Customer');
   }
 
+  private canViewAiClassification(actor: AuthenticatedUser): boolean {
+    return actor.roles.some((role) =>
+      ['Admin', 'Manager', 'SupportAgent'].includes(role),
+    );
+  }
+
   private assertValidId(id: number): void {
     if (!Number.isInteger(id) || id < 1) {
       throw new BadRequestException('Request ID must be a positive integer');
     }
   }
 
-  private toResponse(request: ServiceRequest): ServiceRequestResponseDto {
-    return {
+  private toResponse(
+    request: ServiceRequest,
+    includeAiClassification = false,
+  ): ServiceRequestResponseDto {
+    const response: ServiceRequestResponseDto = {
       id: request.id,
       customerId: request.customerId,
       serviceId: request.serviceId,
@@ -756,5 +857,19 @@ export class RequestsService {
       createdAt: request.createdAt,
       updatedAt: request.updatedAt,
     };
+    if (includeAiClassification) {
+      response.aiClassificationCategory =
+        request.aiClassificationCategory ?? null;
+      response.aiSuggestedPriority = request.aiSuggestedPriority ?? null;
+      response.aiClassificationConfidence =
+        request.aiClassificationConfidence === null ||
+        request.aiClassificationConfidence === undefined
+          ? null
+          : Number(request.aiClassificationConfidence);
+      response.aiClassificationReason = request.aiClassificationReason ?? null;
+      response.aiClassificationStatus = request.aiClassificationStatus;
+      response.aiClassifiedAt = request.aiClassifiedAt ?? null;
+    }
+    return response;
   }
 }

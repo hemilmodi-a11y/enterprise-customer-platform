@@ -14,6 +14,8 @@ import { CatalogService } from '../services/catalog-service.entity';
 import { User } from '../users/user.entity';
 import { ServiceRequestStatus } from './service-request-status.enum';
 import { ServiceRequestPriority } from './service-request-priority.enum';
+import { AiTicketCategory } from './ai-ticket-category.enum';
+import { AiClassificationStatus } from './ai-classification-status.enum';
 
 @Entity('service_requests')
 @Index('IDX_service_requests_customer_status', ['customerId', 'status'])
@@ -73,6 +75,54 @@ export class ServiceRequest {
     default: ServiceRequestPriority.NORMAL,
   })
   priority: ServiceRequestPriority;
+
+  @Column({
+    type: 'enum',
+    enum: AiTicketCategory,
+    name: 'ai_classification_category',
+    nullable: true,
+  })
+  aiClassificationCategory: AiTicketCategory | null;
+
+  @Column({
+    type: 'enum',
+    enum: ServiceRequestPriority,
+    name: 'ai_suggested_priority',
+    nullable: true,
+  })
+  aiSuggestedPriority: ServiceRequestPriority | null;
+
+  @Column({
+    type: 'decimal',
+    precision: 4,
+    scale: 3,
+    name: 'ai_classification_confidence',
+    nullable: true,
+  })
+  aiClassificationConfidence: number | null;
+
+  @Column({
+    type: 'varchar',
+    length: 500,
+    name: 'ai_classification_reason',
+    nullable: true,
+  })
+  aiClassificationReason: string | null;
+
+  @Column({
+    type: 'enum',
+    enum: AiClassificationStatus,
+    name: 'ai_classification_status',
+    default: AiClassificationStatus.DISABLED,
+  })
+  aiClassificationStatus: AiClassificationStatus;
+
+  @Column({
+    type: 'datetime',
+    name: 'ai_classified_at',
+    nullable: true,
+  })
+  aiClassifiedAt: Date | null;
 
   @Column({ type: 'int', name: 'assigned_to_user_id', nullable: true })
   assignedToUserId: number | null;

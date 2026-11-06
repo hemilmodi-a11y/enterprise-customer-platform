@@ -14,6 +14,9 @@ import { Role } from '../src/roles/role.entity';
 import { UserRole } from '../src/roles/user-role.entity';
 import { User } from '../src/users/user.entity';
 import { LlmProviderService } from '../src/ai/llm-provider.service';
+import { TicketClassificationService } from '../src/ai/ticket-classification.service';
+import { AiTicketCategory } from '../src/requests/ai-ticket-category.enum';
+import { ServiceRequestPriority } from '../src/requests/service-request-priority.enum';
 import { KnowledgeIndexingService } from '../src/knowledge-base/knowledge-indexing.service';
 import { KnowledgeBaseService } from '../src/knowledge-base/knowledge-base.service';
 import { AppModule } from './../src/app.module';
@@ -91,6 +94,15 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
       return [];
     }),
   };
+  const mockedTicketClassification = {
+    isEnabled: jest.fn().mockReturnValue(false),
+    classify: jest.fn().mockResolvedValue({
+      category: AiTicketCategory.SECURITY,
+      priority: ServiceRequestPriority.URGENT,
+      confidence: 0.98,
+      reason: 'The customer reports an unauthorized transaction.',
+    }),
+  };
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -100,6 +112,8 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
       .useValue(mockedLlmProvider)
       .overrideProvider(KnowledgeIndexingService)
       .useValue(mockedKnowledgeIndexing)
+      .overrideProvider(TicketClassificationService)
+      .useValue(mockedTicketClassification)
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -501,9 +515,9 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
         customerActor,
         5,
       );
-    expect(customerKeywordMatches.map(({ documentId }) => documentId)).toContain(
-      publicDocument.body.documentId,
-    );
+    expect(
+      customerKeywordMatches.map(({ documentId }) => documentId),
+    ).toContain(publicDocument.body.documentId);
     await expect(
       knowledgeBase.searchLatestAssistantDocumentsByTerms(
         [privateContent],
@@ -646,5 +660,41 @@ describe('Enterprise Customer Platform database-backed workflow (e2e)', () => {
         .expect(200);
       expect(confidentialAnswer.body.sources).toEqual([]);
     }
+  });
+
+  it('classifies tickets through the authenticated staff endpoint with structured output', async () => {
+    const payload = {
+      title: 'Unauthorized transaction',
+      description: 'I noticed a charge that I did not authorize.',
+    };
+
+    await request(app.getHttpServer())
+      .post('/api/v1/ai/tickets/classify')
+      .send(payload)
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/api/v1/ai/tickets/classify')
+      .auth(customerToken, { type: 'bearer' })
+      .send(payload)
+      .expect(403);
+
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/ai/tickets/classify')
+      .auth(agentToken, { type: 'bearer' })
+      .send(payload)
+      .expect(200);
+    expect(response.body).toEqual({
+      category: AiTicketCategory.SECURITY,
+      priority: ServiceRequestPriority.URGENT,
+      confidence: 0.98,
+      reason: 'The customer reports an unauthorized transaction.',
+    });
+    expect(mockedTicketClassification.classify).toHaveBeenCalledWith(payload);
+
+    await request(app.getHttpServer())
+      .post('/api/v1/ai/tickets/classify')
+      .auth(agentToken, { type: 'bearer' })
+      .send({ title: '', description: '' })
+      .expect(400);
   });
 });

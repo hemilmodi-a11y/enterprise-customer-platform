@@ -11,10 +11,12 @@ import { RequestAttachmentsService } from './request-attachments.service';
 import { RequestAttachmentStorageService } from './request-attachment-storage.service';
 import { AgentRequestsController } from './agent-requests.controller';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { AiModule } from '../ai/ai.module';
 
 @Module({
   imports: [
     AuthModule,
+    AiModule,
     NotificationsModule,
     ServiceRequestReadModelModule,
     TypeOrmModule.forFeature([ServiceRequest, ServiceRequestAttachment]),

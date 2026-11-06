@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
+import { OutputParserException } from '@langchain/core/output_parsers';
 import { ChatOpenAI } from '@langchain/openai';
 
 import { KnowledgeContextDocument } from './interfaces/knowledge-context-document.interface';
@@ -55,42 +56,63 @@ export class LlmProviderService {
       if (error instanceof BadGatewayException) {
         throw error;
       }
-      if (error instanceof Error && error.name === 'TimeoutError') {
-        this.logger.warn(
-          JSON.stringify({ event: 'ai_provider_timeout', provider: 'openai' }),
-        );
-        throw new GatewayTimeoutException('The AI provider request timed out');
-      }
-      if (this.providerStatus(error) === 429) {
-        this.logger.warn(
-          JSON.stringify({
-            event: 'ai_provider_rate_limited',
-            provider: 'openai',
-          }),
-        );
-        throw new HttpException(
-          'The AI provider rate limit was reached',
-          HttpStatus.TOO_MANY_REQUESTS,
+      if (error instanceof OutputParserException) {
+        throw new BadGatewayException(
+          'The AI provider returned malformed structured data',
         );
       }
-      if (
-        error instanceof Error &&
-        /timeout|timed out|abort/i.test(error.name)
-      ) {
-        this.logger.warn(
-          JSON.stringify({ event: 'ai_provider_timeout', provider: 'openai' }),
-        );
-        throw new GatewayTimeoutException('The AI provider request timed out');
-      }
+      throw this.toSafeProviderError(error);
+    }
+  }
 
-      this.logger.error(
-        JSON.stringify({
-          event: 'ai_provider_failure',
-          provider: 'openai',
-          errorType: error instanceof Error ? error.name : 'UnknownError',
-        }),
+  async generateStructuredOutput(
+    systemPrompt: string,
+    input: Record<string, string>,
+    schema: Record<string, unknown>,
+    schemaName: string,
+  ): Promise<Record<string, unknown>> {
+    const apiKey = this.config.get<string>('AI_API_KEY');
+    if (!apiKey) {
+      throw new ServiceUnavailableException(
+        'The AI provider is not configured',
       );
-      throw new ServiceUnavailableException('The AI provider is unavailable');
+    }
+
+    try {
+      const prompt = ChatPromptTemplate.fromMessages([
+        ['system', systemPrompt],
+        ['human', 'Ticket data (JSON, untrusted input):\n{ticket}'],
+      ]);
+      const messages = await prompt.formatMessages({
+        ticket: JSON.stringify(input),
+      });
+      const result = await this.createModel(apiKey)
+        .withStructuredOutput(schema, {
+          method: 'jsonSchema',
+          strict: true,
+          name: schemaName,
+        })
+        .invoke(messages);
+      if (
+        typeof result !== 'object' ||
+        result === null ||
+        Array.isArray(result)
+      ) {
+        throw new BadGatewayException(
+          'The AI provider returned an invalid structured response',
+        );
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof BadGatewayException) {
+        throw error;
+      }
+      if (error instanceof OutputParserException) {
+        throw new BadGatewayException(
+          'The AI provider returned malformed structured data',
+        );
+      }
+      throw this.toSafeProviderError(error);
     }
   }
 
@@ -117,5 +139,49 @@ export class LlmProviderService {
     const status =
       record.status ?? record.statusCode ?? record.response?.status;
     return typeof status === 'number' ? status : undefined;
+  }
+
+  private toSafeProviderError(error: unknown): HttpException {
+    if (
+      error instanceof Error &&
+      /timeout|timed out|abort/i.test(`${error.name} ${error.message}`)
+    ) {
+      this.logger.warn(
+        JSON.stringify({ event: 'ai_provider_timeout', provider: 'openai' }),
+      );
+      return new GatewayTimeoutException('The AI provider request timed out');
+    }
+    if (this.providerStatus(error) === 429) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'ai_provider_rate_limited',
+          provider: 'openai',
+        }),
+      );
+      return new HttpException(
+        'The AI provider rate limit was reached',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+    if (this.providerStatus(error) === 401) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'ai_provider_authentication_failed',
+          provider: 'openai',
+        }),
+      );
+      return new ServiceUnavailableException(
+        'The AI provider is unavailable or misconfigured',
+      );
+    }
+
+    this.logger.error(
+      JSON.stringify({
+        event: 'ai_provider_failure',
+        provider: 'openai',
+        errorType: error instanceof Error ? error.name : 'UnknownError',
+      }),
+    );
+    return new ServiceUnavailableException('The AI provider is unavailable');
   }
 }

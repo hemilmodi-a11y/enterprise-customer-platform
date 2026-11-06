@@ -13,6 +13,8 @@ import { ServiceStatus } from '../services/service-status.enum';
 import { ListAgentRequestsQueryDto } from './dto/list-agent-requests-query.dto';
 import { ListRequestsQueryDto } from './dto/list-requests-query.dto';
 import { RequestsService } from './requests.service';
+import { AiClassificationStatus } from './ai-classification-status.enum';
+import { AiTicketCategory } from './ai-ticket-category.enum';
 import {
   OPEN_SERVICE_REQUEST_STATUSES,
   ServiceRequestStatus,
@@ -41,6 +43,10 @@ describe('RequestsService', () => {
   let repositories: Record<string, any>;
   let syncService: { enqueueRequest: jest.Mock };
   let notificationOutbox: { enqueue: jest.Mock };
+  let ticketClassification: {
+    isEnabled: jest.Mock;
+    classify: jest.Mock;
+  };
 
   beforeEach(() => {
     const customer = {
@@ -74,7 +80,8 @@ describe('RequestsService', () => {
       },
       ServiceRequest: {
         create: jest.fn((entity) => entity),
-        save: jest.fn(async (entity) => ({ ...entity, ...request })),
+        save: jest.fn(async (entity) => ({ ...request, ...entity })),
+        update: jest.fn().mockResolvedValue({ affected: 1 }),
         findOne: jest.fn().mockResolvedValue(request),
         createQueryBuilder: jest.fn(),
       },
@@ -106,10 +113,15 @@ describe('RequestsService', () => {
 
     syncService = { enqueueRequest: jest.fn() };
     notificationOutbox = { enqueue: jest.fn() };
+    ticketClassification = {
+      isEnabled: jest.fn().mockReturnValue(false),
+      classify: jest.fn(),
+    };
     requestsService = new RequestsService(
       dataSource as any,
       syncService as any,
       notificationOutbox as any,
+      ticketClassification as any,
     );
   });
 
@@ -129,6 +141,8 @@ describe('RequestsService', () => {
       status: ServiceRequestStatus.SUBMITTED,
       priority: ServiceRequestPriority.NORMAL,
     });
+    expect(response).not.toHaveProperty('aiClassificationStatus');
+    expect(response).not.toHaveProperty('aiClassificationReason');
     expect(syncService.enqueueRequest).toHaveBeenCalledWith(
       expect.any(Object),
       99,
@@ -141,6 +155,92 @@ describe('RequestsService', () => {
         relatedServiceRequestId: 99,
       }),
     );
+  });
+
+  it('stores AI suggestions separately without changing a manually supplied priority', async () => {
+    ticketClassification.isEnabled.mockReturnValue(true);
+    ticketClassification.classify.mockResolvedValue({
+      category: AiTicketCategory.TECHNICAL,
+      priority: ServiceRequestPriority.URGENT,
+      confidence: 0.94,
+      reason: 'The service appears to be unavailable.',
+    });
+
+    const response = await requestsService.create(
+      {
+        serviceId: 5,
+        description: 'We need internet restored.',
+        priority: ServiceRequestPriority.HIGH,
+      },
+      customerActor,
+    );
+
+    expect(ticketClassification.classify).toHaveBeenCalledWith({
+      title: 'Internet Connectivity',
+      description: 'We need internet restored.',
+      serviceName: 'Internet Connectivity',
+    });
+    expect(repositories.ServiceRequest.update).toHaveBeenCalledWith(
+      99,
+      expect.objectContaining({
+        aiClassificationCategory: AiTicketCategory.TECHNICAL,
+        aiSuggestedPriority: ServiceRequestPriority.URGENT,
+        aiClassificationConfidence: 0.94,
+        aiClassificationStatus: AiClassificationStatus.COMPLETED,
+      }),
+    );
+    expect(response.priority).toBe(ServiceRequestPriority.HIGH);
+    expect(response).not.toHaveProperty('aiSuggestedPriority');
+    expect(response).not.toHaveProperty('aiClassificationReason');
+  });
+
+  it('keeps the ticket creation successful and records failed AI classification', async () => {
+    ticketClassification.isEnabled.mockReturnValue(true);
+    ticketClassification.classify.mockRejectedValue(
+      new Error('provider response with private details'),
+    );
+
+    const response = await requestsService.create(
+      { serviceId: 5, description: 'We need internet restored.' },
+      customerActor,
+    );
+
+    expect(response.id).toBe(99);
+    expect(response.priority).toBe(ServiceRequestPriority.NORMAL);
+    expect(response).not.toHaveProperty('aiClassificationStatus');
+    expect(repositories.ServiceRequest.update).toHaveBeenCalledWith(99, {
+      aiClassificationStatus: AiClassificationStatus.FAILED,
+      aiClassifiedAt: null,
+    });
+  });
+
+  it('returns persisted AI classification metadata to authorized staff', async () => {
+    repositories.ServiceRequest.findOne.mockResolvedValue({
+      id: 99,
+      customerId: 11,
+      serviceId: 5,
+      description: 'We need internet restored.',
+      status: ServiceRequestStatus.SUBMITTED,
+      priority: ServiceRequestPriority.NORMAL,
+      aiClassificationCategory: AiTicketCategory.TECHNICAL,
+      aiSuggestedPriority: ServiceRequestPriority.URGENT,
+      aiClassificationConfidence: '0.940',
+      aiClassificationReason: 'The service appears to be unavailable.',
+      aiClassificationStatus: AiClassificationStatus.COMPLETED,
+      aiClassifiedAt: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const response = await requestsService.findById(99, adminActor);
+
+    expect(response).toMatchObject({
+      aiClassificationCategory: AiTicketCategory.TECHNICAL,
+      aiSuggestedPriority: ServiceRequestPriority.URGENT,
+      aiClassificationConfidence: 0.94,
+      aiClassificationReason: 'The service appears to be unavailable.',
+      aiClassificationStatus: AiClassificationStatus.COMPLETED,
+    });
   });
 
   it('returns an existing request for an idempotent retry with the same payload', async () => {

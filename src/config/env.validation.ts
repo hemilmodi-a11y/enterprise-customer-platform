@@ -25,6 +25,8 @@ export const envValidationSchema = Joi.object({
 
   AI_API_KEY: Joi.string().min(1).empty(''),
 
+  AI_TICKET_CLASSIFICATION_ENABLED: Joi.boolean().default(false),
+
   AI_MODEL: Joi.string().min(1).default('gpt-4o-mini'),
 
   AI_TEMPERATURE: Joi.number().min(0).max(1).default(0.2),

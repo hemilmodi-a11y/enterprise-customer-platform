@@ -1,5 +1,7 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
+import { AiClassificationStatus } from '../ai-classification-status.enum';
+import { AiTicketCategory } from '../ai-ticket-category.enum';
 import { ServiceRequestPriority } from '../service-request-priority.enum';
 import { ServiceRequestStatus } from '../service-request-status.enum';
 
@@ -21,6 +23,24 @@ export class ServiceRequestResponseDto {
 
   @ApiProperty({ enum: ServiceRequestPriority })
   priority: ServiceRequestPriority;
+
+  @ApiPropertyOptional({ enum: AiTicketCategory, nullable: true })
+  aiClassificationCategory?: AiTicketCategory | null;
+
+  @ApiPropertyOptional({ enum: ServiceRequestPriority, nullable: true })
+  aiSuggestedPriority?: ServiceRequestPriority | null;
+
+  @ApiPropertyOptional({ nullable: true, minimum: 0, maximum: 1 })
+  aiClassificationConfidence?: number | null;
+
+  @ApiPropertyOptional({ nullable: true, maxLength: 500 })
+  aiClassificationReason?: string | null;
+
+  @ApiPropertyOptional({ enum: AiClassificationStatus })
+  aiClassificationStatus?: AiClassificationStatus;
+
+  @ApiPropertyOptional({ type: Date, nullable: true })
+  aiClassifiedAt?: Date | null;
 
   @ApiProperty({ type: Number, nullable: true, required: false })
   assignedToUserId: number | null;
